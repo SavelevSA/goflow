@@ -10,12 +10,16 @@ import (
 
 type previewSimulation struct {
 	density atomic.Int32
+	paused  atomic.Bool
+	mode    atomic.Value
+	seed    atomic.Int64
 }
 
 // Создать снимок
 func (sim *previewSimulation) Snapshot() model.Snapshot {
 	snapshot := model.Snapshot{
-		Mode: model.ModeFixed, Density: int(sim.density.Load()), Seed: 42,
+		Mode: sim.mode.Load().(model.Mode), Density: int(sim.density.Load()),
+		Paused: sim.paused.Load(), Seed: sim.seed.Load(),
 		Vehicles: []model.Vehicle{},
 		Intersections: []model.Intersection{
 			{ID: 1, X: 25, Y: 25, Phase: model.PhaseNS},
@@ -29,6 +33,21 @@ func (sim *previewSimulation) Snapshot() model.Snapshot {
 
 func (sim *previewSimulation) SetDensity(density int) error {
 	sim.density.Store(int32(density))
+	return nil
+}
+
+func (sim *previewSimulation) SetPaused(paused bool) error {
+	sim.paused.Store(paused)
+	return nil
+}
+
+func (sim *previewSimulation) SetMode(mode model.Mode) error {
+	sim.mode.Store(mode)
+	return nil
+}
+
+func (sim *previewSimulation) Reset(seed int64) error {
+	sim.seed.Store(seed)
 	return nil
 }
 
@@ -90,9 +109,121 @@ func registerDensity(mux *http.ServeMux, sim interface {
 	})
 }
 
+// POST-запрос переключения паузы симуляции
+func registerPaused(mux *http.ServeMux, sim interface {
+	Snapshot() model.Snapshot
+	SetPaused(bool) error
+}) {
+	mux.HandleFunc("/api/pause", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		var body struct {
+			Paused *bool `json:"paused"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&body)
+
+		if err != nil || body.Paused == nil {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "expected a boolean paused field"})
+			return
+		}
+
+		if sim.SetPaused(*body.Paused) != nil {
+			w.WriteHeader(500)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "could not set pause"})
+			return
+		}
+
+		snapshot := sim.Snapshot()
+		_ = json.NewEncoder(w).Encode(snapshot)
+	})
+}
+
+// POST-запрос переключения режима работы
+func registerMode(mux *http.ServeMux, sim interface {
+	Snapshot() model.Snapshot
+	SetMode(model.Mode) error
+}) {
+	mux.HandleFunc("/api/mode", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		var body struct {
+			Mode model.Mode `json:"mode"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&body)
+
+		if err != nil || (body.Mode != model.ModeFixed && body.Mode != model.ModeAdaptive) {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "expected fixed or adaptive mode"})
+			return
+		}
+
+		if err := sim.SetMode(body.Mode); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "could not set mode"})
+			return
+		}
+
+		snapshot := sim.Snapshot()
+		_ = json.NewEncoder(w).Encode(snapshot)
+	})
+}
+
+func registerReset(mux *http.ServeMux, sim interface {
+	Snapshot() model.Snapshot
+	Reset(int64) error
+}) {
+	mux.HandleFunc("/api/reset", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		var body struct {
+			Seed *int64 `json:"seed"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&body)
+
+		if err != nil || body.Seed == nil {
+			w.WriteHeader(400)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "expected int value"})
+			return
+		}
+
+		if sim.Reset(*body.Seed) != nil {
+			w.WriteHeader(500)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "could not reset"})
+			return
+		}
+
+		snapshot := sim.Snapshot()
+		_ = json.NewEncoder(w).Encode(snapshot)
+	})
+}
+
 func RegisterPreview(mux *http.ServeMux) {
 	sim := &previewSimulation{}
 	sim.density.Store(3)
+	sim.mode.Store(model.ModeFixed)
+	sim.seed.Store(42)
 	registerState(mux, sim)
 	registerDensity(mux, sim)
+	registerPaused(mux, sim)
+	registerMode(mux, sim)
+	registerReset(mux, sim)
 }
