@@ -224,3 +224,58 @@ func TestReset(t *testing.T) {
 		t.Errorf("после GET ожидали seed=0. Ответ: %s", getRec.Body.String())
 	}
 }
+
+func TestBadRequest(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"density_out_of_range", "/api/density", `{"density":6}`},
+		{"unknown_mode", "/api/mode", `{"mode":"auto"}`},
+		{"missing_paused", "/api/pause", `{}`},
+		{"missing_seed", "/api/reset", `{}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			RegisterPreview(mux)
+
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("статус = %d, ожидали 400. Ответ: %s", rec.Code, rec.Body.String())
+			}
+
+			var response struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("не удалось прочитать JSON ошибки: %v", err)
+			}
+			if response.Error == "" {
+				t.Errorf("ожидали непустое поле error. Ответ: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestMethodNotAllowed(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterPreview(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/pause", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("статус = %d, ожидали 405. Ответ: %s", rec.Code, rec.Body.String())
+	}
+	if allow := rec.Header().Get("Allow"); allow != http.MethodPost {
+		t.Errorf("Allow = %q, ожидали %q", allow, http.MethodPost)
+	}
+}
