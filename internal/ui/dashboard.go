@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -14,6 +15,9 @@ type dashboard struct {
 	app.Compo
 	wasmReady bool
 	loadError string
+
+	requestCtx context.Context
+	cancel     context.CancelFunc
 }
 
 func NewDashboard() app.Composer {
@@ -121,7 +125,7 @@ func (d *dashboard) renderCity() app.UI {
 
 func (d *dashboard) loadSnapshot(ctx app.Context) {
 	ctx.Async(func() {
-		snapshot, err := fetchSnapshot()
+		snapshot, err := fetchSnapshot(d.requestCtx)
 
 		ctx.Dispatch(func(ctx app.Context) {
 			ctx.After(300*time.Millisecond, d.loadSnapshot)
@@ -136,6 +140,13 @@ func (d *dashboard) loadSnapshot(ctx app.Context) {
 
 }
 
+func (d *dashboard) OnDismount() {
+	if d.cancel != nil {
+		d.cancel()
+	}
+}
+
 func (d *dashboard) OnMount(ctx app.Context) {
+	d.requestCtx, d.cancel = context.WithCancel(context.Background())
 	d.loadSnapshot(ctx)
 }

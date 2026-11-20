@@ -15,7 +15,19 @@ var apiClient = &http.Client{
 }
 
 func fetchSnapshot(ctx context.Context) (model.Snapshot, error) {
-	resp, err := apiClient.Get("/api/state")
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"/api/state",
+		nil,
+	)
+	if err != nil {
+		return model.Snapshot{}, err
+	}
+
+	resp, err := apiClient.Do(req)
+
 	if err != nil {
 		return model.Snapshot{}, err
 	}
