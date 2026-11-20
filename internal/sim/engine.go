@@ -36,18 +36,24 @@ func (e *Engine) Snapshot() model.Snapshot {
 
 func (e *Engine) step() {
 	e.state.Tick++
-	e.state.Intersections[0].QueueEW = 0
+	for J := range e.state.Intersections {
+		e.state.Intersections[J].QueueEW = 0
+	}
 	for i := range e.state.Vehicles {
 		e.state.Vehicles[i].Waiting = false
 		if e.state.Vehicles[i].Direction == model.East {
-			intersection := e.state.Intersections[0]
-			if e.state.Vehicles[i].Y == intersection.Y && (e.state.Vehicles[i].X+1) == intersection.X && intersection.Phase == model.PhaseNS {
-				e.state.Vehicles[i].Waiting = true
-				e.state.Intersections[0].QueueEW++
-				e.state.Vehicles[i].WaitingTime += tickSeconds
-				continue
+			for J := range e.state.Intersections {
+				intersection := e.state.Intersections[J]
+				if e.state.Vehicles[i].Y == intersection.Y && (e.state.Vehicles[i].X+1) == intersection.X && intersection.Phase == model.PhaseNS {
+					e.state.Vehicles[i].Waiting = true
+					e.state.Intersections[J].QueueEW++
+					e.state.Vehicles[i].WaitingTime += tickSeconds
+					break
+				}
 			}
-			e.state.Vehicles[i].X++
+			if !e.state.Vehicles[i].Waiting {
+				e.state.Vehicles[i].X++
+			}
 		}
 	}
 	if e.state.Tick == 1 {
