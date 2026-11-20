@@ -47,3 +47,29 @@ func TestVehicleStopsAtSecondIntersection(t *testing.T) {
 		t.Fatalf("got intersection queueEW=%d, want queueEW=0", snapshot.Intersections[0].QueueEW)
 	}
 }
+func TestVerticalVehicleStopsAtRedLight(t *testing.T) {
+	engine := NewEngine()
+	engine.step()
+	engine.state.Vehicles[0] = model.Vehicle{ID: 1, X: 25, Y: 24, Direction: model.South}
+	engine.state.Intersections[0].Phase = model.PhaseEW
+	engine.step()
+	snapshot := engine.Snapshot()
+	if snapshot.Vehicles[0].Y != 24 {
+		t.Fatalf("got vehicle at Y=%v, want Y=24", snapshot.Vehicles[0].Y)
+	}
+	if !snapshot.Vehicles[0].Waiting {
+		t.Fatalf("got vehicle waiting=%v, want waiting=true", snapshot.Vehicles[0].Waiting)
+	}
+	engine.state.Intersections[0].Phase = model.PhaseNS
+	engine.step()
+	snapshot = engine.Snapshot()
+	if snapshot.Vehicles[0].Y != 25 {
+		t.Fatalf("got vehicle at Y=%v, want Y=25", snapshot.Vehicles[0].Y)
+	}
+	engine.step()
+	snapshot = engine.Snapshot()
+	if snapshot.Vehicles[0].Y != 26 {
+		t.Fatalf("got vehicle at Y=%v, want Y=26", snapshot.Vehicles[0].Y)
+	}
+
+}
