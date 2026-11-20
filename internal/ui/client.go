@@ -1,14 +1,21 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"goflow/internal/model"
 	"net/http"
+	"time"
+
+	"goflow/internal/model"
 )
 
-func fetchSnapshot() (model.Snapshot, error) {
-	resp, err := http.Get("/api/state")
+var apiClient = &http.Client{
+	Timeout: 5 * time.Second,
+}
+
+func fetchSnapshot(ctx context.Context) (model.Snapshot, error) {
+	resp, err := apiClient.Get("/api/state")
 	if err != nil {
 		return model.Snapshot{}, err
 	}

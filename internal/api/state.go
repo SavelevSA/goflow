@@ -22,7 +22,14 @@ func RegisterPreview(mux *http.ServeMux) {
 
 		snapshot := model.Snapshot{
 			Mode: model.ModeFixed, Density: 3, Seed: 42,
-			Vehicles: []model.Vehicle{},
+			Vehicles: []model.Vehicle{
+				{
+					ID:        1,
+					X:         10,
+					Y:         25,
+					Direction: model.East,
+				},
+			},
 			Intersections: []model.Intersection{
 				{ID: 1, X: 25, Y: 25, Phase: model.PhaseNS},
 				{ID: 2, X: 75, Y: 25, Phase: model.PhaseNS},
