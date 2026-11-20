@@ -1,8 +1,12 @@
 package sim
 
 import (
-	"goflow/internal/model"
+	"context"
 	"testing"
+	"testing/synctest"
+	"time"
+
+	"goflow/internal/model"
 )
 
 func TestVehicleStopAtRedLight(t *testing.T) {
@@ -165,4 +169,142 @@ func TestQueueCountsVehiclesBehindRedLight(t *testing.T) {
 		t.Fatalf("got queueNS=%d, want 0", snapshot.Intersections[0].QueueNS)
 	}
 
+}
+
+func TestEngineStartAndStop(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		engine := NewEngine()
+		engine.Start(context.Background())
+		defer engine.Stop()
+
+		time.Sleep(500 * time.Millisecond)
+		synctest.Wait()
+		if tick := engine.Snapshot().Tick; tick == 0 {
+			t.Fatal("engine did not tick after Start")
+		}
+
+		engine.Stop()
+		stoppedTick := engine.Snapshot().Tick
+		time.Sleep(500 * time.Millisecond)
+		synctest.Wait()
+		if tick := engine.Snapshot().Tick; tick != stoppedTick {
+			t.Fatalf("tick after Stop = %d, want %d", tick, stoppedTick)
+		}
+	})
+}
+
+func TestEnginePauseAndResume(t *testing.T) {
+	engine := NewEngine()
+
+	if err := engine.SetPaused(true); err != nil {
+		t.Fatalf("pause engine: %v", err)
+	}
+	engine.step()
+	paused := engine.Snapshot()
+	if !paused.Paused || paused.Tick != 0 {
+		t.Fatalf("after paused step: paused=%t, tick=%d, want paused=true, tick=0", paused.Paused, paused.Tick)
+	}
+
+	if err := engine.SetPaused(false); err != nil {
+		t.Fatalf("resume engine: %v", err)
+	}
+	engine.step()
+	resumed := engine.Snapshot()
+	if resumed.Paused || resumed.Tick != 1 {
+		t.Fatalf("after resumed step: paused=%t, tick=%d, want paused=false, tick=1", resumed.Paused, resumed.Tick)
+	}
+}
+
+func TestEngineSetDensity(t *testing.T) {
+	engine := NewEngine()
+
+	if err := engine.SetDensity(5); err != nil {
+		t.Fatalf("SetDensity(5): %v", err)
+	}
+	if density := engine.Snapshot().Density; density != 5 {
+		t.Fatalf("density after SetDensity(5) = %d, want 5", density)
+	}
+
+	for _, invalid := range []int{0, 6} {
+		if err := engine.SetDensity(invalid); err == nil {
+			t.Fatalf("SetDensity(%d) returned nil, want an error", invalid)
+		}
+		if density := engine.Snapshot().Density; density != 5 {
+			t.Fatalf("density after SetDensity(%d) = %d, want 5", invalid, density)
+		}
+	}
+}
+
+func TestEngineSetMode(t *testing.T) {
+	engine := NewEngine()
+
+	if err := engine.SetMode(model.ModeAdaptive); err != nil {
+		t.Fatalf("SetMode(adaptive): %v", err)
+	}
+	if mode := engine.Snapshot().Mode; mode != model.ModeAdaptive {
+		t.Fatalf("mode after SetMode(adaptive) = %q, want adaptive", mode)
+	}
+
+	if err := engine.SetMode(model.Mode("unknown")); err == nil {
+		t.Fatal("SetMode(unknown) returned nil, want an error")
+	}
+	if mode := engine.Snapshot().Mode; mode != model.ModeAdaptive {
+		t.Fatalf("mode after SetMode(unknown) = %q, want adaptive", mode)
+	}
+
+	if err := engine.SetMode(model.ModeFixed); err != nil {
+		t.Fatalf("SetMode(fixed): %v", err)
+	}
+	if mode := engine.Snapshot().Mode; mode != model.ModeFixed {
+		t.Fatalf("mode after SetMode(fixed) = %q, want fixed", mode)
+	}
+}
+
+func TestEngineReset(t *testing.T) {
+	engine := NewEngine()
+	if err := engine.SetMode(model.ModeAdaptive); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetDensity(5); err != nil {
+		t.Fatal(err)
+	}
+	engine.step()
+	if err := engine.SetPaused(true); err != nil {
+		t.Fatal(err)
+	}
+
+	engine.state.Intersections[0].Phase = model.PhaseEW
+	engine.state.Intersections[0].PhaseElapsed = 8
+	engine.state.Intersections[0].QueueEW = 2
+	engine.state.Intersections[0].QueueNS = 1
+	engine.state.Statistics.TotalCompleted = 1
+	engine.state.Statistics.TotalQueue = 3
+	engine.state.Statistics.AverageWaitingTime = 2.5
+	engine.completedWaitingTime = 2.5
+
+	const seed int64 = 123
+	if err := engine.Reset(seed); err != nil {
+		t.Fatalf("reset engine: %v", err)
+	}
+
+	snapshot := engine.Snapshot()
+	if snapshot.Mode != model.ModeAdaptive || snapshot.Density != 5 || !snapshot.Paused {
+		t.Fatalf("settings after reset: mode=%q, density=%d, paused=%t", snapshot.Mode, snapshot.Density, snapshot.Paused)
+	}
+	if snapshot.Seed != seed || snapshot.Tick != 0 || len(snapshot.Vehicles) != 0 {
+		t.Fatalf("after reset: seed=%d, tick=%d, vehicles=%d", snapshot.Seed, snapshot.Tick, len(snapshot.Vehicles))
+	}
+
+	initial := NewEngine().Snapshot()
+	if len(snapshot.Intersections) != len(initial.Intersections) {
+		t.Fatalf("intersections after reset = %d, want %d", len(snapshot.Intersections), len(initial.Intersections))
+	}
+	for i, intersection := range snapshot.Intersections {
+		if intersection != initial.Intersections[i] {
+			t.Fatalf("intersection %d after reset: got %+v, want %+v", i, intersection, initial.Intersections[i])
+		}
+	}
+	if snapshot.Statistics != (model.Statistics{}) || engine.completedWaitingTime != 0 {
+		t.Fatalf("after reset: statistics=%+v, completed waiting time=%v", snapshot.Statistics, engine.completedWaitingTime)
+	}
 }

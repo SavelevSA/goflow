@@ -3,7 +3,11 @@ package sim
 import (
 	"slices"
 
+	"context"
+	"fmt"
 	"goflow/internal/model"
+	"sync"
+	"time"
 )
 
 const tickSeconds = 0.25
@@ -12,6 +16,9 @@ const spawnIntervalTicks = 80
 type Engine struct {
 	state                model.Snapshot
 	completedWaitingTime float64
+	mu                   sync.Mutex
+	cancel               context.CancelFunc
+	done                 chan struct{}
 }
 
 func NewEngine() *Engine {
@@ -30,6 +37,8 @@ func NewEngine() *Engine {
 }
 
 func (e *Engine) Snapshot() model.Snapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	snapshot := e.state
 	snapshot.Intersections = slices.Clone(e.state.Intersections)
 	snapshot.Vehicles = slices.Clone(e.state.Vehicles)
@@ -37,6 +46,11 @@ func (e *Engine) Snapshot() model.Snapshot {
 }
 
 func (e *Engine) step() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state.Paused {
+		return
+	}
 	e.state.Tick++
 	for J := range e.state.Intersections {
 		e.state.Intersections[J].QueueEW = 0
@@ -149,4 +163,92 @@ func (e *Engine) step() {
 	}
 	e.state.Statistics.TotalQueue = totalQueue
 
+}
+
+func (e *Engine) run(ctx context.Context) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			e.step()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (e *Engine) Start(ctx context.Context) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.done != nil {
+		return
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	e.cancel = cancel
+	e.done = done
+
+	go func() {
+		e.run(runCtx)
+		cancel()
+		e.mu.Lock()
+		e.cancel = nil
+		e.done = nil
+		close(done)
+		e.mu.Unlock()
+	}()
+}
+
+func (e *Engine) Stop() {
+	e.mu.Lock()
+	cancel := e.cancel
+	done := e.done
+	e.mu.Unlock()
+	if done == nil {
+		return
+	}
+	cancel()
+	<-done
+}
+
+func (e *Engine) SetPaused(paused bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.state.Paused = paused
+	return nil
+}
+
+func (e *Engine) SetDensity(density int) error {
+	if density < 1 || density > 5 {
+		return fmt.Errorf("density must be between 1 and 5, got %d", density)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.state.Density = density
+	return nil
+}
+
+func (e *Engine) SetMode(mode model.Mode) error {
+	if mode != model.ModeFixed && mode != model.ModeAdaptive {
+		return fmt.Errorf("invalid mode %q: expected fixed or adaptive", mode)
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.state.Mode = mode
+	return nil
+
+}
+
+func (e *Engine) Reset(seed int64) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	fresh := NewEngine().state
+	fresh.Mode = e.state.Mode
+	fresh.Density = e.state.Density
+	fresh.Paused = e.state.Paused
+	fresh.Seed = seed
+	e.state = fresh
+	e.completedWaitingTime = 0
+	return nil
 }
