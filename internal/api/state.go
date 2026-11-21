@@ -221,6 +221,16 @@ func RegisterPreview(mux *http.ServeMux) {
 	sim.density.Store(3)
 	sim.mode.Store(model.ModeFixed)
 	sim.seed.Store(42)
+	RegisterRoutes(mux, sim)
+}
+
+func RegisterRoutes(mux *http.ServeMux, sim interface {
+	Snapshot() model.Snapshot
+	SetDensity(int) error
+	SetPaused(bool) error
+	SetMode(model.Mode) error
+	Reset(int64) error
+}) {
 	registerState(mux, sim)
 	registerDensity(mux, sim)
 	registerPaused(mux, sim)
