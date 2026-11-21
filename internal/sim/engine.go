@@ -5,6 +5,8 @@ import (
 
 	"context"
 	"fmt"
+	"goflow/internal/control"
+	"goflow/internal/metrics"
 	"goflow/internal/model"
 	"sync"
 	"time"
@@ -156,12 +158,35 @@ func (e *Engine) step() {
 		vehicle.ID = e.state.Statistics.TotalSpawned
 		e.state.Vehicles = append(e.state.Vehicles, vehicle)
 	}
-	e.state.Statistics.ActiveVehicles = len(e.state.Vehicles)
+
 	totalQueue := 0
 	for _, intersection := range e.state.Intersections {
 		totalQueue += intersection.QueueEW + intersection.QueueNS
 	}
-	e.state.Statistics.TotalQueue = totalQueue
+
+	counters := metrics.Counters{
+		TotalSpawned:         e.state.Statistics.TotalSpawned,
+		TotalCompleted:       e.state.Statistics.TotalCompleted,
+		ActiveVehicles:       len(e.state.Vehicles),
+		TotalQueue:           totalQueue,
+		CompletedWaitingTime: e.completedWaitingTime,
+	}
+	e.state.Statistics = metrics.Calculate(counters)
+
+	var controller control.Controller
+	if e.state.Mode == model.ModeAdaptive {
+		controller = &control.AdaptiveController{MinDuration: 5, MaxDuration: 15, QueueGap: 2}
+	} else {
+		controller = &control.FixedController{Duration: 20}
+	}
+	for i := range e.state.Intersections {
+		e.state.Intersections[i].PhaseElapsed += tickSeconds
+		nextPhase := controller.NextPhase(e.state.Intersections[i])
+		if nextPhase != e.state.Intersections[i].Phase {
+			e.state.Intersections[i].Phase = nextPhase
+			e.state.Intersections[i].PhaseElapsed = 0
+		}
+	}
 
 }
 

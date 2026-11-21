@@ -308,3 +308,100 @@ func TestEngineReset(t *testing.T) {
 		t.Fatalf("after reset: statistics=%+v, completed waiting time=%v", snapshot.Statistics, engine.completedWaitingTime)
 	}
 }
+
+func TestVehicleMovesAfterFixedLightTurnsGreen(t *testing.T) {
+	engine := NewEngine()
+	engine.step()
+	engine.state.Vehicles = []model.Vehicle{
+		{ID: 1, X: 24, Y: 25, Direction: model.East},
+	}
+	engine.state.Intersections[0].Phase = model.PhaseNS
+	engine.state.Intersections[0].PhaseElapsed = 19.75
+
+	engine.step()
+	snapshot := engine.Snapshot()
+	if len(snapshot.Vehicles) != 1 {
+		t.Fatalf("vehicles on switching tick = %d, want 1", len(snapshot.Vehicles))
+	}
+	vehicle := snapshot.Vehicles[0]
+	if vehicle.X != 24 || !vehicle.Waiting {
+		t.Fatalf("vehicle on switching tick: X=%v, waiting=%t, want X=24, waiting=true", vehicle.X, vehicle.Waiting)
+	}
+	intersection := snapshot.Intersections[0]
+	if intersection.Phase != model.PhaseEW || intersection.PhaseElapsed != 0 {
+		t.Fatalf("intersection on switching tick: phase=%q, elapsed=%v, want phase=%q, elapsed=0", intersection.Phase, intersection.PhaseElapsed, model.PhaseEW)
+	}
+
+	engine.step()
+	snapshot = engine.Snapshot()
+	if len(snapshot.Vehicles) != 1 {
+		t.Fatalf("vehicles after green = %d, want 1", len(snapshot.Vehicles))
+	}
+	vehicle = snapshot.Vehicles[0]
+	if vehicle.X != 25 || vehicle.Waiting {
+		t.Fatalf("vehicle after green: X=%v, waiting=%t, want X=25, waiting=false", vehicle.X, vehicle.Waiting)
+	}
+}
+
+func TestEngineChoosesPhaseByMode(t *testing.T) {
+	for _, test := range []struct {
+		mode      model.Mode
+		wantPhase model.Phase
+	}{
+		{mode: model.ModeFixed, wantPhase: model.PhaseNS},
+		{mode: model.ModeAdaptive, wantPhase: model.PhaseEW},
+	} {
+		t.Run(string(test.mode), func(t *testing.T) {
+			engine := NewEngine()
+			if err := engine.SetMode(test.mode); err != nil {
+				t.Fatalf("set mode: %v", err)
+			}
+			engine.step()
+			engine.state.Vehicles = []model.Vehicle{
+				{ID: 1, X: 24, Y: 25, Direction: model.East},
+				{ID: 2, X: 23, Y: 25, Direction: model.East},
+				{ID: 3, X: 22, Y: 25, Direction: model.East},
+			}
+			engine.state.Intersections[0].Phase = model.PhaseNS
+			engine.state.Intersections[0].PhaseElapsed = 5.75
+
+			engine.step()
+			intersection := engine.Snapshot().Intersections[0]
+			if intersection.QueueEW != 3 || intersection.QueueNS != 0 {
+				t.Fatalf("queues: EW=%d, NS=%d, want EW=3, NS=0", intersection.QueueEW, intersection.QueueNS)
+			}
+			if intersection.Phase != test.wantPhase {
+				t.Fatalf("phase = %q, want %q", intersection.Phase, test.wantPhase)
+			}
+		})
+	}
+}
+
+func TestEngineReportsAverageWaitingTimeAfterTrip(t *testing.T) {
+	engine := NewEngine()
+	engine.step()
+	engine.state.Vehicles[0] = model.Vehicle{ID: 1, X: 74, Y: 25, Direction: model.East}
+	engine.state.Intersections[1].Phase = model.PhaseNS
+	engine.state.Intersections[1].PhaseElapsed = 19.75
+
+	engine.step()
+	waiting := engine.Snapshot()
+	if len(waiting.Vehicles) != 1 {
+		t.Fatalf("vehicles on red = %d, want 1", len(waiting.Vehicles))
+	}
+	vehicle := waiting.Vehicles[0]
+	if vehicle.X != 74 || !vehicle.Waiting || vehicle.WaitingTime != 0.25 {
+		t.Fatalf("vehicle on red: X=%v, waiting=%t, waiting time=%v, want X=74, waiting=true, waiting time=0.25", vehicle.X, vehicle.Waiting, vehicle.WaitingTime)
+	}
+	if waiting.Statistics.TotalCompleted != 0 || waiting.Statistics.AverageWaitingTime != 0 {
+		t.Fatalf("before trip completion: completed=%d, average=%v, want completed=0, average=0", waiting.Statistics.TotalCompleted, waiting.Statistics.AverageWaitingTime)
+	}
+
+	for range 27 {
+		engine.step()
+	}
+	finished := engine.Snapshot()
+	if finished.Statistics.TotalCompleted != 1 || finished.Statistics.AverageWaitingTime != 0.25 {
+		t.Fatalf("after trip completion: completed=%d, average=%v, want completed=1, average=0.25", finished.Statistics.TotalCompleted, finished.Statistics.AverageWaitingTime)
+	}
+}
