@@ -21,6 +21,8 @@ type dashboard struct {
 
 	commandError string
 	commandBusy  bool
+
+	commandVersion int
 }
 
 func NewDashboard() app.Composer {
@@ -33,11 +35,88 @@ func (d *dashboard) Render() app.UI {
 		status = "WebAssembly работает"
 	}
 
+	pauseText := "Пауза"
+	if d.snapshot.Paused {
+		pauseText = "Продолжить"
+	}
+
 	return app.Main().Body(
 		app.H1().Text("GoFlow"),
 		app.P().Text(fmt.Sprintf("Перекрёстков: %d", len(d.snapshot.Intersections))),
+
+		app.Button().
+			Text(pauseText).
+			Disabled(d.commandBusy).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				payload := struct {
+					Paused bool `json:"paused"`
+				}{
+					Paused: !d.snapshot.Paused,
+				}
+
+				d.runCommand(ctx, "/api/pause", payload)
+			}),
+
+		app.P().Text(fmt.Sprintf("Режим: %s", d.snapshot.Mode)),
+
+		app.Button().
+			Text("Fixed").
+			Disabled(d.commandBusy).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				payload := struct {
+					Mode model.Mode `json:"mode"`
+				}{
+					Mode: model.ModeFixed,
+				}
+
+				d.runCommand(ctx, "/api/mode", payload)
+			}),
+
+		app.Button().
+			Text("Adaptive").
+			Disabled(d.commandBusy).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				payload := struct {
+					Mode model.Mode `json:"mode"`
+				}{
+					Mode: model.ModeAdaptive,
+				}
+
+				d.runCommand(ctx, "/api/mode", payload)
+			}),
+
+		app.P().Text(fmt.Sprintf("Плотность: %d", d.snapshot.Density)),
+
+		app.Button().
+			Text("−").
+			Disabled(d.commandBusy || d.snapshot.Density <= 1).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				d.changeDensity(ctx, d.snapshot.Density-1)
+			}),
+
+		app.Button().
+			Text("+").
+			Disabled(d.commandBusy || d.snapshot.Density >= 5).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				d.changeDensity(ctx, d.snapshot.Density+1)
+			}),
+
+		app.Button().
+			Text("Сбросить").
+			Disabled(d.commandBusy).
+			OnClick(func(ctx app.Context, _ app.Event) {
+				payload := struct {
+					Seed int64 `json:"seed"`
+				}{
+					Seed: d.snapshot.Seed,
+				}
+
+				d.runCommand(ctx, "/api/reset", payload)
+			}),
+
 		d.renderCity(),
 		app.P().Text(d.loadError),
+		app.P().Text(d.commandError),
 		app.Button().Text(status).OnClick(func(_ app.Context, _ app.Event) {
 			d.wasmReady = true
 		}),
@@ -127,11 +206,15 @@ func (d *dashboard) renderCity() app.UI {
 }
 
 func (d *dashboard) loadSnapshot(ctx app.Context) {
+	version := d.commandVersion
 	ctx.Async(func() {
 		snapshot, err := fetchSnapshot(d.requestCtx)
 
 		ctx.Dispatch(func(ctx app.Context) {
 			ctx.After(300*time.Millisecond, d.loadSnapshot)
+			if d.commandBusy || version != d.commandVersion {
+				return
+			}
 			if err != nil {
 				d.loadError = err.Error()
 				return
@@ -152,4 +235,43 @@ func (d *dashboard) OnDismount() {
 func (d *dashboard) OnMount(ctx app.Context) {
 	d.requestCtx, d.cancel = context.WithCancel(context.Background())
 	d.loadSnapshot(ctx)
+}
+
+func (d *dashboard) runCommand(
+	ctx app.Context,
+	path string,
+	payload any,
+) {
+	if d.commandBusy {
+		return
+	}
+	d.commandVersion++
+	d.commandBusy = true
+	d.commandError = ""
+
+	ctx.Async(func() {
+		snapshot, err := sendCommand(d.requestCtx, path, payload)
+
+		ctx.Dispatch(func(ctx app.Context) {
+			d.commandVersion++
+			d.commandBusy = false
+
+			if err != nil {
+				d.commandError = err.Error()
+				return
+			}
+
+			d.snapshot = snapshot
+		})
+	})
+}
+
+func (d *dashboard) changeDensity(ctx app.Context, density int) {
+	payload := struct {
+		Density int `json:"density"`
+	}{
+		Density: density,
+	}
+
+	d.runCommand(ctx, "/api/density", payload)
 }
