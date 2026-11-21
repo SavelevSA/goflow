@@ -18,6 +18,9 @@ type dashboard struct {
 
 	requestCtx context.Context
 	cancel     context.CancelFunc
+
+	commandError string
+	commandBusy  bool
 }
 
 func NewDashboard() app.Composer {
