@@ -161,6 +161,49 @@ func (d *dashboard) renderCity() app.UI {
 
 	}
 
+	segments := []struct {
+		start  int
+		length int
+	}{
+		{start: 0, length: 19},
+		{start: 31, length: 38},
+		{start: 81, length: 19},
+	}
+
+	for _, position := range []int{25, 75} {
+		for _, segment := range segments {
+			elements = append(elements,
+				app.Div().
+					Style("position", "absolute").
+					Style("left", fmt.Sprintf("%d%%", position)).
+					Style("top", fmt.Sprintf("%d%%", segment.start)).
+					Style("height", fmt.Sprintf("%d%%", segment.length)).
+					Style("border-left", "2px dashed white").
+					Style("transform", "translateX(-50%)"),
+
+				app.Div().
+					Style("position", "absolute").
+					Style("left", fmt.Sprintf("%d%%", segment.start)).
+					Style("top", fmt.Sprintf("%d%%", position)).
+					Style("width", fmt.Sprintf("%d%%", segment.length)).
+					Style("border-top", "2px dashed white").
+					Style("transform", "translateY(-50%)"),
+			)
+		}
+	}
+
+	for _, intersection := range d.snapshot.Intersections {
+		x := intersection.X
+		y := intersection.Y
+
+		elements = append(elements,
+			stopLine(x-6, y, true),
+			stopLine(x+6, y-6, true),
+			stopLine(x-6, y-6, false),
+			stopLine(x, y+6, false),
+		)
+	}
+
 	for _, vehicle := range d.snapshot.Vehicles {
 
 		angle := 0
@@ -184,8 +227,8 @@ func (d *dashboard) renderCity() app.UI {
 				Style("transform", fmt.Sprintf(
 					"translate(-50%%, -50%%) rotate(%ddeg)", angle,
 				)).
-				Style("width", "24px").
-				Style("height", "16px").
+				Style("width", "6%").
+				Style("height", "3%").
 				Style("background", "blue").
 				Style("color", "white").
 				Style("font-size", "12px").
@@ -196,17 +239,17 @@ func (d *dashboard) renderCity() app.UI {
 					app.Span().
 						Style("position", "absolute").
 						Style("right", "0").
-						Style("top", "1px").
-						Style("width", "4px").
-						Style("height", "4px").
+						Style("top", "10%").
+						Style("width", "15%").
+						Style("height", "25%").
 						Style("background", "yellow"),
 
 					app.Span().
 						Style("position", "absolute").
 						Style("right", "0").
-						Style("bottom", "1px").
-						Style("width", "4px").
-						Style("height", "4px").
+						Style("bottom", "10%").
+						Style("width", "15%").
+						Style("height", "25%").
 						Style("background", "yellow"),
 				),
 		)
@@ -347,4 +390,24 @@ func (d *dashboard) renderLights() app.UI {
 		app.H2().Text("Светофоры"),
 		app.Div().Body(labels...),
 	)
+}
+
+func stopLine(x, y float64, vertical bool) app.UI {
+	line := app.Div().
+		Style("position", "absolute").
+		Style("left", fmt.Sprintf("%g%%", x)).
+		Style("top", fmt.Sprintf("%g%%", y)).
+		Style("background", "white")
+
+	if vertical {
+		return line.
+			Style("width", "2px").
+			Style("height", "6%").
+			Style("transform", "translateX(-50%)")
+	}
+
+	return line.
+		Style("width", "6%").
+		Style("height", "2px").
+		Style("transform", "translateY(-50%)")
 }
