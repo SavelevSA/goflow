@@ -364,7 +364,51 @@ func (d *dashboard) renderStatistics() app.UI {
 		app.P().Text(fmt.Sprintf(
 			"Среднее ожидание: %.1f с", stats.AverageWaitingTime,
 		)),
+
+		app.H2().Text("Сравнение режимов"),
+
+		app.Div().
+			Style("display", "grid").
+			Style("grid-template-columns", "repeat(auto-fit, minmax(220px, 1fr))").
+			Style("gap", "16px").
+			Body(
+				renderModePanel("Fixed", d.snapshot.ModeStats.Fixed),
+				renderModePanel("Adaptive", d.snapshot.ModeStats.Adaptive),
+			),
 	)
+}
+
+func renderModePanel(name string, stats model.ModeStatistics) app.UI {
+	return app.Div().
+		Style("padding", "16px").
+		Body(
+			app.H3().Text(name),
+
+			app.P().Text(fmt.Sprintf(
+				"Время работы: %.1f с",
+				float64(stats.ActiveTicks)*0.25,
+			)),
+
+			app.P().Text(fmt.Sprintf(
+				"Завершённых пересечений: %d",
+				stats.CompletedCrossings,
+			)),
+
+			app.P().Text(fmt.Sprintf(
+				"Ожидавших автомобилей: %d",
+				stats.WaitingVehicles,
+			)),
+
+			app.P().Text(fmt.Sprintf(
+				"Суммарное ожидание: %.1f с",
+				stats.WaitingSeconds,
+			)),
+
+			app.P().Text(fmt.Sprintf(
+				"Среднее ожидание: %.1f с",
+				stats.AverageWaitingTime,
+			)),
+		)
 }
 
 func stopLine(x, y float64, vertical bool) app.UI {
