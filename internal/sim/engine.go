@@ -38,6 +38,7 @@ type Engine struct {
 	cancel               context.CancelFunc
 	done                 chan struct{}
 	crossings            map[int]crossingRecord
+	waitingSeen          map[model.Mode]map[int]bool
 }
 
 func NewEngine() *Engine {
@@ -54,6 +55,10 @@ func NewEngine() *Engine {
 		},
 	},
 		crossings: make(map[int]crossingRecord),
+		waitingSeen: map[model.Mode]map[int]bool{
+			model.ModeFixed:    {},
+			model.ModeAdaptive: {},
+		},
 	}
 }
 
@@ -131,12 +136,21 @@ func (e *Engine) step() {
 		if vehicle.Waiting {
 			vehicle.WaitingTime += tickSeconds
 			//статистика по режиму
-			switch e.state.Mode {
-			case model.ModeFixed:
-				e.state.ModeStats.Fixed.WaitingSeconds += tickSeconds
-			case model.ModeAdaptive:
-				e.state.ModeStats.Adaptive.WaitingSeconds += tickSeconds
+			stats := &e.state.ModeStats.Fixed
+
+			if e.state.Mode == model.ModeAdaptive {
+				stats = &e.state.ModeStats.Adaptive
 			}
+
+			stats.WaitingSeconds += tickSeconds
+
+			if !e.waitingSeen[e.state.Mode][vehicle.ID] {
+				e.waitingSeen[e.state.Mode][vehicle.ID] = true
+				stats.WaitingVehicles++
+			}
+
+			stats.AverageWaitingTime =
+				stats.WaitingSeconds / float64(stats.WaitingVehicles)
 		}
 
 		if !vehicle.Waiting {
@@ -449,5 +463,9 @@ func (e *Engine) Reset(seed int64) error {
 	e.state = fresh
 	e.completedWaitingTime = 0
 	e.crossings = make(map[int]crossingRecord)
+	e.waitingSeen = map[model.Mode]map[int]bool{
+		model.ModeFixed:    {},
+		model.ModeAdaptive: {},
+	}
 	return nil
 }

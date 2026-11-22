@@ -54,6 +54,8 @@ type ModeStatistics struct {
 	CompletedCrossings int     `json:"completedCrossings"`
 	WaitingSeconds     float64 `json:"waitingSeconds"`
 	ActiveTicks        int     `json:"activeTicks"`
+	WaitingVehicles    int     `json:"waitingVehicles"`
+	AverageWaitingTime float64 `json:"averageWaitingTime"`
 }
 
 type ModeStats struct {
