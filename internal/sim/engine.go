@@ -214,13 +214,8 @@ func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersecti
 		return true
 	}
 
-	// Traffic already in the intersection has priority after a phase change.
 	clearance := intersectionHalfSize + vehicleHalfLength
 	for _, other := range traffic {
-		if distanceAhead(vehicle, other, dx, dy) > 0 &&
-			math.Abs(other.X-intersection.X) < clearance && math.Abs(other.Y-intersection.Y) < clearance {
-			return true
-		}
 		switch other.Direction {
 		case model.East, model.West:
 			if dy != 0 && math.Abs(other.Y-intersection.Y) == laneOffset && math.Abs(other.X-intersection.X) < clearance {
