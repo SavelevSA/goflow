@@ -115,7 +115,7 @@ func (d *dashboard) Render() app.UI {
 			}),
 
 		d.renderCity(),
-		d.renderLights(),
+
 		d.renderStatistics(),
 
 		app.P().Text(d.loadError),
@@ -195,12 +195,24 @@ func (d *dashboard) renderCity() app.UI {
 	for _, intersection := range d.snapshot.Intersections {
 		x := intersection.X
 		y := intersection.Y
+		nsColor := "red"
+		ewColor := "red"
+
+		if intersection.Phase == model.PhaseNS {
+			nsColor = "lime"
+		} else if intersection.Phase == model.PhaseEW {
+			ewColor = "lime"
+		}
 
 		elements = append(elements,
 			stopLine(x-6, y, true),
 			stopLine(x+6, y-6, true),
 			stopLine(x-6, y-6, false),
 			stopLine(x, y+6, false),
+			trafficLight(x-6, y, ewColor),
+			trafficLight(x+6, y, ewColor),
+			trafficLight(x, y-6, nsColor),
+			trafficLight(x, y+6, nsColor),
 		)
 	}
 
@@ -355,43 +367,6 @@ func (d *dashboard) renderStatistics() app.UI {
 	)
 }
 
-func (d *dashboard) renderLights() app.UI {
-	var labels []app.UI
-
-	for _, intersection := range d.snapshot.Intersections {
-		phaseText := "неизвестная фаза"
-
-		if intersection.Phase == model.PhaseNS {
-			phaseText = "зелёный: С–Ю"
-		} else if intersection.Phase == model.PhaseEW {
-			phaseText = "зелёный: В–З"
-		}
-
-		position := "сверху"
-		if intersection.Y > 50 {
-			position = "снизу"
-		}
-
-		if intersection.X < 50 {
-			position += " слева"
-		} else {
-			position += " справа"
-		}
-
-		labels = append(labels,
-			app.P().Text(fmt.Sprintf(
-				"№%d (%s): %s",
-				intersection.ID, position, phaseText,
-			)),
-		)
-	}
-
-	return app.Div().Body(
-		app.H2().Text("Светофоры"),
-		app.Div().Body(labels...),
-	)
-}
-
 func stopLine(x, y float64, vertical bool) app.UI {
 	line := app.Div().
 		Style("position", "absolute").
@@ -410,4 +385,17 @@ func stopLine(x, y float64, vertical bool) app.UI {
 		Style("width", "6%").
 		Style("height", "2px").
 		Style("transform", "translateY(-50%)")
+}
+
+func trafficLight(x, y float64, color string) app.UI {
+	return app.Div().
+		Style("position", "absolute").
+		Style("left", fmt.Sprintf("%g%%", x)).
+		Style("top", fmt.Sprintf("%g%%", y)).
+		Style("width", "12px").
+		Style("height", "12px").
+		Style("border-radius", "50%").
+		Style("background", color).
+		Style("border", "1px solid black").
+		Style("transform", "translate(-50%, -50%)")
 }
