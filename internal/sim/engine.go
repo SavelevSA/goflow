@@ -1,19 +1,30 @@
 package sim
 
 import (
-	"slices"
-
 	"context"
 	"fmt"
+	"math"
+	"slices"
+	"sync"
+	"time"
+
 	"goflow/internal/control"
 	"goflow/internal/metrics"
 	"goflow/internal/model"
-	"sync"
-	"time"
 )
 
-const tickSeconds = 0.25
-const spawnIntervalTicks = 80
+const (
+	tickSeconds        = 0.25
+	tickInterval       = 125 * time.Millisecond
+	spawnIntervalTicks = 10
+	vehicleStep        = 1.0
+
+	laneOffset           = 3.0
+	intersectionHalfSize = 6.0
+	vehicleHalfLength    = 3.0
+	vehicleGap           = 1.0
+	minVehicleSpacing    = 2*vehicleHalfLength + vehicleGap
+)
 
 type Engine struct {
 	state                model.Snapshot
@@ -54,9 +65,9 @@ func (e *Engine) step() {
 		return
 	}
 	e.state.Tick++
-	for J := range e.state.Intersections {
-		e.state.Intersections[J].QueueEW = 0
-		e.state.Intersections[J].QueueNS = 0
+	for i := range e.state.Intersections {
+		e.state.Intersections[i].QueueEW = 0
+		e.state.Intersections[i].QueueNS = 0
 	}
 	vehiclesBeforeMove := slices.Clone(e.state.Vehicles)
 	waitingAt := make([]int, len(e.state.Vehicles))
@@ -66,7 +77,6 @@ func (e *Engine) step() {
 		blockedBy[i] = -1
 	}
 	for i := range e.state.Vehicles {
-		e.state.Vehicles[i].Waiting = false
 		var dx float64
 		var dy float64
 		switch e.state.Vehicles[i].Direction {
@@ -79,42 +89,35 @@ func (e *Engine) step() {
 		case model.South:
 			dy = 1
 		default:
+			e.state.Vehicles[i].Waiting = false
 			continue
 		}
-		for J := range e.state.Intersections {
-			intersection := e.state.Intersections[J]
-			if dx != 0 && e.state.Vehicles[i].Y == intersection.Y && (e.state.Vehicles[i].X+dx) == intersection.X && intersection.Phase == model.PhaseNS {
-				e.state.Vehicles[i].Waiting = true
-				waitingAt[i] = J
-				e.state.Vehicles[i].WaitingTime += tickSeconds
-				break
-			}
-			if dy != 0 && e.state.Vehicles[i].X == intersection.X && (e.state.Vehicles[i].Y+dy) == intersection.Y && intersection.Phase == model.PhaseEW {
-				e.state.Vehicles[i].Waiting = true
-				waitingAt[i] = J
-				e.state.Vehicles[i].WaitingTime += tickSeconds
+		vehicle := &e.state.Vehicles[i]
+		for j, intersection := range e.state.Intersections {
+			if mustWaitAtIntersection(*vehicle, intersection, dx, dy, vehiclesBeforeMove) {
+				waitingAt[i] = j
 				break
 			}
 		}
 
-		if !e.state.Vehicles[i].Waiting {
-			nextX := e.state.Vehicles[i].X + dx
-			nextY := e.state.Vehicles[i].Y + dy
+		if waitingAt[i] == -1 {
 			for otherIndex, other := range vehiclesBeforeMove {
-				if otherIndex != i && other.X == nextX && other.Y == nextY {
-					e.state.Vehicles[i].Waiting = true
-					e.state.Vehicles[i].WaitingTime += tickSeconds
-					if other.Direction == e.state.Vehicles[i].Direction {
-						blockedBy[i] = otherIndex
-					}
+				distance := distanceAhead(*vehicle, other, dx, dy)
+				if distance > 0 && distance-vehicleStep < minVehicleSpacing {
+					blockedBy[i] = otherIndex
 					break
 				}
 			}
 		}
 
-		if !e.state.Vehicles[i].Waiting {
-			e.state.Vehicles[i].X += dx
-			e.state.Vehicles[i].Y += dy
+		vehicle.Waiting = waitingAt[i] != -1 || blockedBy[i] != -1
+		if vehicle.Waiting {
+			vehicle.WaitingTime += tickSeconds
+		}
+
+		if !vehicle.Waiting {
+			vehicle.X += dx * vehicleStep
+			vehicle.Y += dy * vehicleStep
 		}
 	}
 	for i := range e.state.Vehicles {
@@ -144,20 +147,7 @@ func (e *Engine) step() {
 		}
 	}
 
-	spawnInterval := spawnIntervalTicks * 3 / e.state.Density
-	if (e.state.Tick-1)%spawnInterval == 0 {
-		spawnPoints := [4]model.Vehicle{
-			{X: 0, Y: 25, Direction: model.East},
-			{X: 100, Y: 75, Direction: model.West},
-			{X: 25, Y: 0, Direction: model.South},
-			{X: 75, Y: 100, Direction: model.North},
-		}
-		index := e.state.Statistics.TotalSpawned % len(spawnPoints)
-		vehicle := spawnPoints[index]
-		e.state.Statistics.TotalSpawned++
-		vehicle.ID = e.state.Statistics.TotalSpawned
-		e.state.Vehicles = append(e.state.Vehicles, vehicle)
-	}
+	e.spawnVehicle()
 
 	totalQueue := 0
 	for _, intersection := range e.state.Intersections {
@@ -187,11 +177,89 @@ func (e *Engine) step() {
 			e.state.Intersections[i].PhaseElapsed = 0
 		}
 	}
+}
 
+func distanceAhead(vehicle, other model.Vehicle, dx, dy float64) float64 {
+	if vehicle.Direction == other.Direction {
+		if dx != 0 && vehicle.Y == other.Y {
+			return (other.X - vehicle.X) * dx
+		}
+		if dy != 0 && vehicle.X == other.X {
+			return (other.Y - vehicle.Y) * dy
+		}
+	}
+	return 0
+}
+
+func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersection, dx, dy float64, traffic []model.Vehicle) bool {
+	var distance float64
+	var greenPhase model.Phase
+	if dx != 0 {
+		if vehicle.Y != intersection.Y+dx*laneOffset {
+			return false
+		}
+		distance = (intersection.X-vehicle.X)*dx - intersectionHalfSize - vehicleHalfLength
+		greenPhase = model.PhaseEW
+	} else {
+		if vehicle.X != intersection.X-dy*laneOffset {
+			return false
+		}
+		distance = (intersection.Y-vehicle.Y)*dy - intersectionHalfSize - vehicleHalfLength
+		greenPhase = model.PhaseNS
+	}
+	if distance < 0 || distance > vehicleStep {
+		return false
+	}
+	if intersection.Phase != greenPhase {
+		return true
+	}
+
+	// Traffic already in the intersection has priority after a phase change.
+	clearance := intersectionHalfSize + vehicleHalfLength
+	for _, other := range traffic {
+		if distanceAhead(vehicle, other, dx, dy) > 0 &&
+			math.Abs(other.X-intersection.X) < clearance && math.Abs(other.Y-intersection.Y) < clearance {
+			return true
+		}
+		switch other.Direction {
+		case model.East, model.West:
+			if dy != 0 && math.Abs(other.Y-intersection.Y) == laneOffset && math.Abs(other.X-intersection.X) < clearance {
+				return true
+			}
+		case model.North, model.South:
+			if dx != 0 && math.Abs(other.X-intersection.X) == laneOffset && math.Abs(other.Y-intersection.Y) < clearance {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *Engine) spawnVehicle() {
+	interval := spawnIntervalTicks * 3 / e.state.Density
+	if (e.state.Tick-1)%interval != 0 {
+		return
+	}
+	spawnPoints := [...]model.Vehicle{
+		{X: 0, Y: 25 + laneOffset, Direction: model.East},
+		{X: 100, Y: 75 - laneOffset, Direction: model.West},
+		{X: 25 - laneOffset, Y: 0, Direction: model.South},
+		{X: 75 + laneOffset, Y: 100, Direction: model.North},
+	}
+	vehicle := spawnPoints[e.state.Statistics.TotalSpawned%len(spawnPoints)]
+	for _, other := range e.state.Vehicles {
+		if other.Direction == vehicle.Direction &&
+			math.Abs(other.X-vehicle.X)+math.Abs(other.Y-vehicle.Y) < minVehicleSpacing {
+			return
+		}
+	}
+	e.state.Statistics.TotalSpawned++
+	vehicle.ID = e.state.Statistics.TotalSpawned
+	e.state.Vehicles = append(e.state.Vehicles, vehicle)
 }
 
 func (e *Engine) run(ctx context.Context) {
-	ticker := time.NewTicker(250 * time.Millisecond)
+	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	for {
 		select {
