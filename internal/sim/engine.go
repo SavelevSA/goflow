@@ -26,12 +26,18 @@ const (
 	minVehicleSpacing    = 2*vehicleHalfLength + vehicleGap
 )
 
+type crossingRecord struct {
+	IntersectionID int
+	Mode           model.Mode
+}
+
 type Engine struct {
 	state                model.Snapshot
 	completedWaitingTime float64
 	mu                   sync.Mutex
 	cancel               context.CancelFunc
 	done                 chan struct{}
+	crossings            map[int]crossingRecord
 }
 
 func NewEngine() *Engine {
@@ -46,7 +52,9 @@ func NewEngine() *Engine {
 			{ID: 3, X: 25, Y: 75, Phase: model.PhaseNS},
 			{ID: 4, X: 75, Y: 75, Phase: model.PhaseNS},
 		},
-	}}
+	},
+		crossings: make(map[int]crossingRecord),
+	}
 }
 
 func (e *Engine) Snapshot() model.Snapshot {
@@ -65,6 +73,15 @@ func (e *Engine) step() {
 		return
 	}
 	e.state.Tick++
+
+	//статистика по режиму
+	switch e.state.Mode {
+	case model.ModeFixed:
+		e.state.ModeStats.Fixed.ActiveTicks++
+	case model.ModeAdaptive:
+		e.state.ModeStats.Adaptive.ActiveTicks++
+	}
+
 	for i := range e.state.Intersections {
 		e.state.Intersections[i].QueueEW = 0
 		e.state.Intersections[i].QueueNS = 0
@@ -113,6 +130,13 @@ func (e *Engine) step() {
 		vehicle.Waiting = waitingAt[i] != -1 || blockedBy[i] != -1
 		if vehicle.Waiting {
 			vehicle.WaitingTime += tickSeconds
+			//статистика по режиму
+			switch e.state.Mode {
+			case model.ModeFixed:
+				e.state.ModeStats.Fixed.WaitingSeconds += tickSeconds
+			case model.ModeAdaptive:
+				e.state.ModeStats.Adaptive.WaitingSeconds += tickSeconds
+			}
 		}
 
 		if !vehicle.Waiting {
@@ -120,6 +144,42 @@ func (e *Engine) step() {
 			vehicle.Y += dy * vehicleStep
 		}
 	}
+	// Учёт начала и завершения пересечений
+	for _, vehicle := range e.state.Vehicles {
+		record, exists := e.crossings[vehicle.ID]
+
+		if exists {
+			for _, intersection := range e.state.Intersections {
+				if intersection.ID != record.IntersectionID {
+					continue
+				}
+
+				if !occupiesIntersection(vehicle, intersection) {
+					switch record.Mode {
+					case model.ModeFixed:
+						e.state.ModeStats.Fixed.CompletedCrossings++
+					case model.ModeAdaptive:
+						e.state.ModeStats.Adaptive.CompletedCrossings++
+					}
+
+					delete(e.crossings, vehicle.ID)
+				}
+				break
+			}
+			continue
+		}
+
+		for _, intersection := range e.state.Intersections {
+			if occupiesIntersection(vehicle, intersection) {
+				e.crossings[vehicle.ID] = crossingRecord{
+					IntersectionID: intersection.ID,
+					Mode:           e.state.Mode,
+				}
+				break
+			}
+		}
+	}
+
 	for i := range e.state.Vehicles {
 		if !e.state.Vehicles[i].Waiting {
 			continue
@@ -177,6 +237,33 @@ func (e *Engine) step() {
 			e.state.Intersections[i].PhaseElapsed = 0
 		}
 	}
+}
+
+func occupiesIntersection(
+	vehicle model.Vehicle,
+	intersection model.Intersection,
+) bool {
+	clearance := intersectionHalfSize + vehicleHalfLength
+
+	switch vehicle.Direction {
+	case model.East:
+		return vehicle.Y == intersection.Y+laneOffset &&
+			math.Abs(vehicle.X-intersection.X) < clearance
+
+	case model.West:
+		return vehicle.Y == intersection.Y-laneOffset &&
+			math.Abs(vehicle.X-intersection.X) < clearance
+
+	case model.North:
+		return vehicle.X == intersection.X+laneOffset &&
+			math.Abs(vehicle.Y-intersection.Y) < clearance
+
+	case model.South:
+		return vehicle.X == intersection.X-laneOffset &&
+			math.Abs(vehicle.Y-intersection.Y) < clearance
+	}
+
+	return false
 }
 
 func distanceAhead(vehicle, other model.Vehicle, dx, dy float64) float64 {
@@ -328,6 +415,29 @@ func (e *Engine) SetMode(mode model.Mode) error {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if mode != e.state.Mode {
+		for _, vehicle := range e.state.Vehicles {
+			for _, intersection := range e.state.Intersections {
+
+				if !occupiesIntersection(vehicle, intersection) {
+					continue
+				}
+
+				_, exists := e.crossings[vehicle.ID]
+
+				if !exists {
+					record := crossingRecord{
+						IntersectionID: intersection.ID,
+						Mode:           e.state.Mode,
+					}
+
+					e.crossings[vehicle.ID] = record
+				}
+			}
+		}
+	}
+
 	e.state.Mode = mode
 	return nil
 
@@ -343,5 +453,6 @@ func (e *Engine) Reset(seed int64) error {
 	fresh.Seed = seed
 	e.state = fresh
 	e.completedWaitingTime = 0
+	e.crossings = make(map[int]crossingRecord)
 	return nil
 }

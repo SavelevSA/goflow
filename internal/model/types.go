@@ -50,6 +50,17 @@ type Statistics struct {
 	AverageWaitingTime float64 `json:"averageWaitingTime"`
 }
 
+type ModeStatistics struct {
+	CompletedCrossings int     `json:"completedCrossings"`
+	WaitingSeconds     float64 `json:"waitingSeconds"`
+	ActiveTicks        int     `json:"activeTicks"`
+}
+
+type ModeStats struct {
+	Fixed    ModeStatistics `json:"fixed"`
+	Adaptive ModeStatistics `json:"adaptive"`
+}
+
 type Snapshot struct {
 	Tick          int            `json:"tick"`
 	Mode          Mode           `json:"mode"`
@@ -59,4 +70,5 @@ type Snapshot struct {
 	Vehicles      []Vehicle      `json:"vehicles"`
 	Intersections []Intersection `json:"intersections"`
 	Statistics    Statistics     `json:"statistics"`
+	ModeStats     ModeStats      `json:"modeStats"`
 }
