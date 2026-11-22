@@ -1,12 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"goflow/internal/model"
+	"goflow/internal/sim"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetState(t *testing.T) {
@@ -232,6 +235,7 @@ func TestBadRequest(t *testing.T) {
 		body string
 	}{
 		{"density_out_of_range", "/api/density", `{"density":6}`},
+		{"density_out_of_range", "/api/density", `{"density":5`},
 		{"unknown_mode", "/api/mode", `{"mode":"auto"}`},
 		{"missing_paused", "/api/pause", `{}`},
 		{"missing_seed", "/api/reset", `{}`},
@@ -277,5 +281,121 @@ func TestMethodNotAllowed(t *testing.T) {
 	}
 	if allow := rec.Header().Get("Allow"); allow != http.MethodPost {
 		t.Errorf("Allow = %q, ожидали %q", allow, http.MethodPost)
+	}
+}
+
+func TestPauseWithEngine(t *testing.T) {
+	engine := sim.NewEngine()
+	engine.Start(context.Background())
+	t.Cleanup(engine.Stop)
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, engine)
+
+	requestSnapshot := func(method, path, body string) model.Snapshot {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if method == http.MethodPost {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: ожидали 200, получили %d. Ответ: %s",
+				method, path, rec.Code, rec.Body.String())
+		}
+
+		var snapshot model.Snapshot
+		if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+			t.Fatalf("%s %s: не удалось прочитать снимок: %v", method, path, err)
+		}
+		return snapshot
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for requestSnapshot(http.MethodGet, "/api/state", "").Tick == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("движок не сделал ни одного тика за 2 секунды")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	paused := requestSnapshot(http.MethodPost, "/api/pause", `{"paused":true}`)
+	if !paused.Paused {
+		t.Fatal("после POST /api/pause ожидали paused=true")
+	}
+
+	time.Sleep(600 * time.Millisecond)
+
+	current := requestSnapshot(http.MethodGet, "/api/state", "")
+	if !current.Paused || current.Tick != paused.Tick {
+		t.Fatalf("ожидали paused=true и tick=%d, получили paused=%t и tick=%d",
+			paused.Tick, current.Paused, current.Tick)
+	}
+
+	resumed := requestSnapshot(http.MethodPost, "/api/pause", `{"paused":false}`)
+	if resumed.Paused {
+		t.Fatal("после POST /api/pause ожидали paused=false")
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+
+	for requestSnapshot(http.MethodGet, "/api/state", "").Tick <= paused.Tick {
+		if time.Now().After(deadline) {
+			t.Fatal("после снятия паузы тик не вырос за 2 секунды")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestResetWithEngine(t *testing.T) {
+	engine := sim.NewEngine()
+	engine.Start(context.Background())
+	t.Cleanup(engine.Stop)
+
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, engine)
+
+	requestSnapshot := func(method, path, body string) model.Snapshot {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if method == http.MethodPost {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: ожидали 200, получили %d. Ответ: %s",
+				method, path, rec.Code, rec.Body.String())
+		}
+
+		var snapshot model.Snapshot
+		if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
+			t.Fatalf("%s %s: не удалось прочитать снимок: %v", method, path, err)
+		}
+		return snapshot
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for requestSnapshot(http.MethodGet, "/api/state", "").Tick == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("движок не сделал ни одного тика за 2 секунды")
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	requestSnapshot(http.MethodPost, "/api/density", `{"density":5}`)
+	requestSnapshot(http.MethodPost, "/api/mode", `{"mode":"adaptive"}`)
+	requestSnapshot(http.MethodPost, "/api/pause", `{"paused":true}`)
+	requestSnapshot(http.MethodPost, "/api/reset", `{"seed":123}`)
+
+	newState := requestSnapshot(http.MethodGet, "/api/state", "")
+	if newState.Tick != 0 || newState.Seed != 123 ||
+		newState.Paused != true || newState.Density != 5 || newState.Mode != model.ModeAdaptive {
+		t.Fatal("ожидалось другое состояние")
 	}
 }
