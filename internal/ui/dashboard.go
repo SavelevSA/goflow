@@ -115,6 +115,9 @@ func (d *dashboard) Render() app.UI {
 			}),
 
 		d.renderCity(),
+		d.renderLights(),
+		d.renderStatistics(),
+
 		app.P().Text(d.loadError),
 		app.P().Text(d.commandError),
 		app.Button().Text(status).OnClick(func(_ app.Context, _ app.Event) {
@@ -158,41 +161,54 @@ func (d *dashboard) renderCity() app.UI {
 
 	}
 
-	for _, intersection := range d.snapshot.Intersections { //подпись перекрёстков
-
-		phaseText := "неизвестная фаза"
-		if intersection.Phase == model.PhaseNS {
-			phaseText = "зелёный: С–Ю"
-		} else if intersection.Phase == model.PhaseEW {
-			phaseText = "зелёный: В-З"
-		}
-		elements = append(elements,
-			app.Div().
-				Text(fmt.Sprintf("№%d %s", intersection.ID, phaseText)).
-				Style("position", "absolute").
-				Style("left", fmt.Sprintf("%g%%", intersection.X)).
-				Style("top", fmt.Sprintf("%g%%", intersection.Y)).
-				Style("transform", "translate(-50%, -50%)").
-				Style("background", "white").
-				Style("padding", "8px").
-				Style("border-radius", "6px"),
-		)
-	}
-
 	for _, vehicle := range d.snapshot.Vehicles {
+
+		angle := 0
+
+		switch vehicle.Direction {
+		case model.North:
+			angle = -90
+		case model.South:
+			angle = 90
+		case model.West:
+			angle = 180
+		case model.East:
+			angle = 0
+		}
+
 		elements = append(elements,
 			app.Div().
-				Text(fmt.Sprintf("%d", vehicle.ID)).
 				Style("position", "absolute").
 				Style("left", fmt.Sprintf("%g%%", vehicle.X)).
 				Style("top", fmt.Sprintf("%g%%", vehicle.Y)).
-				Style("transform", "translate(-50%, -50%)").
+				Style("transform", fmt.Sprintf(
+					"translate(-50%%, -50%%) rotate(%ddeg)", angle,
+				)).
 				Style("width", "24px").
 				Style("height", "16px").
 				Style("background", "blue").
 				Style("color", "white").
 				Style("font-size", "12px").
-				Style("text-align", "center"),
+				Style("text-align", "center").
+				Body(
+					app.Span().Text(fmt.Sprintf("%d", vehicle.ID)),
+
+					app.Span().
+						Style("position", "absolute").
+						Style("right", "0").
+						Style("top", "1px").
+						Style("width", "4px").
+						Style("height", "4px").
+						Style("background", "yellow"),
+
+					app.Span().
+						Style("position", "absolute").
+						Style("right", "0").
+						Style("bottom", "1px").
+						Style("width", "4px").
+						Style("height", "4px").
+						Style("background", "yellow"),
+				),
 		)
 	}
 
@@ -274,4 +290,61 @@ func (d *dashboard) changeDensity(ctx app.Context, density int) {
 	}
 
 	d.runCommand(ctx, "/api/density", payload)
+}
+
+func (d *dashboard) renderStatistics() app.UI {
+	stats := d.snapshot.Statistics
+
+	return app.Div().Body(
+		app.H2().Text("Статистика"),
+		app.P().Text(fmt.Sprintf(
+			"Активных машин: %d", stats.ActiveVehicles,
+		)),
+		app.P().Text(fmt.Sprintf(
+			"Завершённых поездок: %d", stats.TotalCompleted,
+		)),
+		app.P().Text(fmt.Sprintf(
+			"В очереди: %d", stats.TotalQueue,
+		)),
+		app.P().Text(fmt.Sprintf(
+			"Среднее ожидание: %.1f с", stats.AverageWaitingTime,
+		)),
+	)
+}
+
+func (d *dashboard) renderLights() app.UI {
+	var labels []app.UI
+
+	for _, intersection := range d.snapshot.Intersections {
+		phaseText := "неизвестная фаза"
+
+		if intersection.Phase == model.PhaseNS {
+			phaseText = "зелёный: С–Ю"
+		} else if intersection.Phase == model.PhaseEW {
+			phaseText = "зелёный: В–З"
+		}
+
+		position := "сверху"
+		if intersection.Y > 50 {
+			position = "снизу"
+		}
+
+		if intersection.X < 50 {
+			position += " слева"
+		} else {
+			position += " справа"
+		}
+
+		labels = append(labels,
+			app.P().Text(fmt.Sprintf(
+				"№%d (%s): %s",
+				intersection.ID, position, phaseText,
+			)),
+		)
+	}
+
+	return app.Div().Body(
+		app.H2().Text("Светофоры"),
+		app.Div().Body(labels...),
+	)
 }
