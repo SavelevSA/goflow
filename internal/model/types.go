@@ -27,6 +27,7 @@ type Vehicle struct {
 	ID          int       `json:"id"`
 	X           float64   `json:"x"`
 	Y           float64   `json:"y"`
+	Length      float64   `json:"length"`
 	Direction   Direction `json:"direction"`
 	Waiting     bool      `json:"waiting"`
 	WaitingTime float64   `json:"waitingTime"`
