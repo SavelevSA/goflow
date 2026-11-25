@@ -217,7 +217,10 @@ func (d *dashboard) renderCity() app.UI {
 	}
 
 	for _, vehicle := range d.snapshot.Vehicles {
-
+		color := "blue"
+		if vehicle.Length == 9 {
+			color = "orange"
+		}
 		angle := 0
 
 		switch vehicle.Direction {
@@ -241,7 +244,7 @@ func (d *dashboard) renderCity() app.UI {
 				)).
 				Style("width", fmt.Sprintf("%g%%", vehicle.Length)).
 				Style("height", "3%").
-				Style("background", "blue").
+				Style("background", color).
 				Style("color", "white").
 				Style("font-size", "12px").
 				Style("text-align", "center").
