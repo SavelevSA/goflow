@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
 	"sync"
 	"time"
@@ -23,7 +24,10 @@ const (
 	intersectionHalfSize = 6.0
 	vehicleHalfLength    = 3.0
 	vehicleGap           = 1.0
-	minVehicleSpacing    = 2*vehicleHalfLength + vehicleGap
+	// minVehicleSpacing    = 2*vehicleHalfLength + vehicleGap
+
+	carLength   = 6.0
+	truckLength = 9.0
 )
 
 type crossingRecord struct {
@@ -39,12 +43,14 @@ type Engine struct {
 	done                 chan struct{}
 	crossings            map[int]crossingRecord
 	waitingSeen          map[model.Mode]map[int]bool
+	rng                  *rand.Rand
 }
 
 func NewEngine() *Engine {
+	const defaultSeed int64 = 42
 	return &Engine{state: model.Snapshot{
 		Density:  3,
-		Seed:     42,
+		Seed:     defaultSeed,
 		Mode:     model.ModeFixed,
 		Vehicles: []model.Vehicle{},
 		Intersections: []model.Intersection{
@@ -54,6 +60,7 @@ func NewEngine() *Engine {
 			{ID: 4, X: 75, Y: 75, Phase: model.PhaseNS},
 		},
 	},
+		rng:       rand.New(rand.NewSource(defaultSeed)),
 		crossings: make(map[int]crossingRecord),
 		waitingSeen: map[model.Mode]map[int]bool{
 			model.ModeFixed:    {},
@@ -125,7 +132,7 @@ func (e *Engine) step() {
 		if waitingAt[i] == -1 {
 			for otherIndex, other := range vehiclesBeforeMove {
 				distance := distanceAhead(*vehicle, other, dx, dy)
-				if distance > 0 && distance-vehicleStep < minVehicleSpacing {
+				if distance > 0 && distance-vehicleStep < safeDistance(*vehicle, other) {
 					blockedBy[i] = otherIndex
 					break
 				}
@@ -257,7 +264,7 @@ func occupiesIntersection(
 	vehicle model.Vehicle,
 	intersection model.Intersection,
 ) bool {
-	clearance := intersectionHalfSize + vehicleHalfLength
+	clearance := intersectionHalfSize + halfLength(vehicle)
 
 	switch vehicle.Direction {
 	case model.East:
@@ -292,6 +299,17 @@ func distanceAhead(vehicle, other model.Vehicle, dx, dy float64) float64 {
 	return 0
 }
 
+func halfLength(vehicle model.Vehicle) float64 {
+	if vehicle.Length == 0 {
+		return vehicleHalfLength
+	}
+	return vehicle.Length / 2
+}
+
+func safeDistance(first, second model.Vehicle) float64 {
+	return halfLength(first) + halfLength(second) + vehicleGap
+}
+
 func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersection, dx, dy float64, traffic []model.Vehicle) bool {
 	var distance float64
 	var greenPhase model.Phase
@@ -299,13 +317,13 @@ func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersecti
 		if vehicle.Y != intersection.Y+dx*laneOffset {
 			return false
 		}
-		distance = (intersection.X-vehicle.X)*dx - intersectionHalfSize - vehicleHalfLength
+		distance = (intersection.X-vehicle.X)*dx - intersectionHalfSize - halfLength(vehicle)
 		greenPhase = model.PhaseEW
 	} else {
 		if vehicle.X != intersection.X-dy*laneOffset {
 			return false
 		}
-		distance = (intersection.Y-vehicle.Y)*dy - intersectionHalfSize - vehicleHalfLength
+		distance = (intersection.Y-vehicle.Y)*dy - intersectionHalfSize - halfLength(vehicle)
 		greenPhase = model.PhaseNS
 	}
 	if distance < 0 || distance > vehicleStep {
@@ -315,15 +333,14 @@ func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersecti
 		return true
 	}
 
-	clearance := intersectionHalfSize + vehicleHalfLength
 	for _, other := range traffic {
 		switch other.Direction {
 		case model.East, model.West:
-			if dy != 0 && math.Abs(other.Y-intersection.Y) == laneOffset && math.Abs(other.X-intersection.X) < clearance {
+			if dy != 0 && occupiesIntersection(other, intersection) {
 				return true
 			}
 		case model.North, model.South:
-			if dx != 0 && math.Abs(other.X-intersection.X) == laneOffset && math.Abs(other.Y-intersection.Y) < clearance {
+			if dx != 0 && occupiesIntersection(other, intersection) {
 				return true
 			}
 		}
@@ -343,9 +360,13 @@ func (e *Engine) spawnVehicle() {
 		{X: 75 + laneOffset, Y: 100, Direction: model.North},
 	}
 	vehicle := spawnPoints[e.state.Statistics.TotalSpawned%len(spawnPoints)]
+	vehicle.Length = carLength
+	if e.rng.Float64() < 0.2 {
+		vehicle.Length = truckLength
+	}
 	for _, other := range e.state.Vehicles {
 		if other.Direction == vehicle.Direction &&
-			math.Abs(other.X-vehicle.X)+math.Abs(other.Y-vehicle.Y) < minVehicleSpacing {
+			math.Abs(other.X-vehicle.X)+math.Abs(other.Y-vehicle.Y) < safeDistance(vehicle, other) {
 			return
 		}
 	}
@@ -461,6 +482,7 @@ func (e *Engine) Reset(seed int64) error {
 	fresh.Paused = e.state.Paused
 	fresh.Seed = seed
 	e.state = fresh
+	e.rng.Seed(seed)
 	e.completedWaitingTime = 0
 	e.crossings = make(map[int]crossingRecord)
 	e.waitingSeen = map[model.Mode]map[int]bool{
