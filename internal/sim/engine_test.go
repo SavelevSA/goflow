@@ -13,7 +13,11 @@ import (
 
 func TestVehicleStopAtRedLight(t *testing.T) {
 	engine := NewEngine()
-	for i := 0; i < 26; i++ {
+	engine.step()
+	engine.state.Vehicles[0] = model.Vehicle{
+		ID: 1, X: 14, Y: 28, Length: carLength, Direction: model.East,
+	}
+	for range 2 {
 		engine.step()
 	}
 	snapshot := engine.Snapshot()
@@ -34,8 +38,13 @@ func TestVehicleStopAtRedLight(t *testing.T) {
 
 func TestVehicleStopsAtSecondIntersection(t *testing.T) {
 	engine := NewEngine()
+	engine.state.Density = 1
+	engine.step()
+	engine.state.Vehicles[0] = model.Vehicle{
+		ID: 1, X: 15, Y: 28, Length: carLength, Direction: model.East,
+	}
 	engine.state.Intersections[0].Phase = model.PhaseEW
-	for i := 0; i < 76; i++ {
+	for range 51 {
 		engine.step()
 	}
 	snapshot := engine.Snapshot()
@@ -123,7 +132,7 @@ func TestVehicleCompletesRouteAfterLeavingMap(t *testing.T) {
 	}
 }
 
-func TestVehicleSpawnsFromNextEntryPoint(t *testing.T) {
+func TestVehicleSpawnsAtValidEntry(t *testing.T) {
 	engine := NewEngine()
 	for range spawnIntervalTicks {
 		engine.step()
@@ -143,14 +152,22 @@ func TestVehicleSpawnsFromNextEntryPoint(t *testing.T) {
 	if snapshot.Vehicles[1].ID != 2 {
 		t.Fatalf("got vehicle ID=%d, want 2", snapshot.Vehicles[1].ID)
 	}
-	if snapshot.Vehicles[1].X != 100 {
-		t.Fatalf("got vehicle X=%v, want 100", snapshot.Vehicles[1].X)
+	vehicle := snapshot.Vehicles[1]
+
+	var validEntry bool
+	switch vehicle.Direction {
+	case model.East:
+		validEntry = vehicle.X == 0 && (vehicle.Y == 28 || vehicle.Y == 78)
+	case model.West:
+		validEntry = vehicle.X == 100 && (vehicle.Y == 22 || vehicle.Y == 72)
+	case model.South:
+		validEntry = vehicle.Y == 0 && (vehicle.X == 22 || vehicle.X == 72)
+	case model.North:
+		validEntry = vehicle.Y == 100 && (vehicle.X == 28 || vehicle.X == 78)
 	}
-	if snapshot.Vehicles[1].Y != 72 {
-		t.Fatalf("got vehicle Y=%v, want 72", snapshot.Vehicles[1].Y)
-	}
-	if snapshot.Vehicles[1].Direction != model.West {
-		t.Fatalf("got vehicle direction=%v, want west", snapshot.Vehicles[1].Direction)
+
+	if !validEntry {
+		t.Fatalf("vehicle spawned at an invalid entry: %+v", vehicle)
 	}
 }
 
@@ -615,30 +632,39 @@ func TestVehicleWaitsOnGreenForStoppedVehicle(t *testing.T) {
 	t.Fatal("eastbound vehicle did not resume after the intersection cleared")
 }
 
-func TestSpawnWaitsForSpaceAtEntry(t *testing.T) {
+func TestSpawnWaitsUntilALaneIsAvailable(t *testing.T) {
 	engine := NewEngine()
-	engine.state.Vehicles = []model.Vehicle{
-		{ID: 1, X: 100, Y: 72, Direction: model.West},
-	}
-	engine.state.Statistics.TotalSpawned = 1
-
-	engine.step()
-	snapshot := engine.Snapshot()
-	if snapshot.Statistics.TotalSpawned != 1 || len(snapshot.Vehicles) != 1 {
-		t.Fatalf("occupied entry: spawned=%d, active=%d, want 1 of each",
-			snapshot.Statistics.TotalSpawned, len(snapshot.Vehicles))
+	for _, road := range []float64{25, 75} {
+		engine.state.Vehicles = append(engine.state.Vehicles,
+			model.Vehicle{X: 0, Y: road + laneOffset, Length: carLength, Direction: model.East},
+			model.Vehicle{X: 100, Y: road - laneOffset, Length: carLength, Direction: model.West},
+			model.Vehicle{X: road - laneOffset, Y: 0, Length: carLength, Direction: model.South},
+			model.Vehicle{X: road + laneOffset, Y: 100, Length: carLength, Direction: model.North},
+		)
 	}
 
-	for range spawnIntervalTicks {
-		engine.step()
+	blockedCount := len(engine.state.Vehicles)
+	engine.state.Statistics.TotalSpawned = blockedCount
+	engine.state.Tick = 1
+	engine.spawnVehicle()
+
+	if len(engine.state.Vehicles) != blockedCount ||
+		engine.state.Statistics.TotalSpawned != blockedCount {
+		t.Fatal("a vehicle spawned while all lanes were blocked")
 	}
-	snapshot = engine.Snapshot()
-	if snapshot.Statistics.TotalSpawned != 2 || len(snapshot.Vehicles) != 2 {
-		t.Fatalf("clear entry: spawned=%d, active=%d, want 2 of each",
-			snapshot.Statistics.TotalSpawned, len(snapshot.Vehicles))
+
+	engine.state.Vehicles = engine.state.Vehicles[1:]
+	engine.state.Tick += spawnIntervalTicks
+	engine.spawnVehicle()
+
+	if len(engine.state.Vehicles) != blockedCount ||
+		engine.state.Statistics.TotalSpawned != blockedCount+1 {
+		t.Fatal("expected one vehicle to spawn after a lane became available")
 	}
-	if vehicle := snapshot.Vehicles[1]; vehicle.ID != 2 || vehicle.X != 100 || vehicle.Y != 72 {
-		t.Fatalf("new vehicle = %+v, want ID=2 at (100, 72)", vehicle)
+
+	vehicle := engine.state.Vehicles[len(engine.state.Vehicles)-1]
+	if vehicle.X != 0 || vehicle.Y != 28 || vehicle.Direction != model.East {
+		t.Fatalf("expected an eastbound vehicle at (0, 28), got %+v", vehicle)
 	}
 }
 

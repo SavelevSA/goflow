@@ -99,47 +99,37 @@ func (e *Engine) step() {
 		e.state.Intersections[i].QueueNS = 0
 	}
 	vehiclesBeforeMove := slices.Clone(e.state.Vehicles)
-	waitingAt := make([]int, len(e.state.Vehicles))
-	blockedBy := make([]int, len(e.state.Vehicles))
-	for i := range len(e.state.Vehicles) {
-		waitingAt[i] = -1
-		blockedBy[i] = -1
+	decisions := make([]movementDecision, len(vehiclesBeforeMove))
+
+	lanes := make(map[laneKey][]int)
+	for i, vehicle := range vehiclesBeforeMove {
+		lane := laneOf(vehicle)
+		lanes[lane] = append(lanes[lane], i)
 	}
-	for i := range e.state.Vehicles {
-		var dx float64
-		var dy float64
-		switch e.state.Vehicles[i].Direction {
-		case model.East:
-			dx = 1
-		case model.West:
-			dx = -1
-		case model.North:
-			dy = -1
-		case model.South:
-			dy = 1
-		default:
-			e.state.Vehicles[i].Waiting = false
-			continue
-		}
+
+	intersections := slices.Clone(e.state.Intersections)
+	var workers sync.WaitGroup
+
+	for _, indices := range lanes {
+		workers.Add(1)
+
+		go func(indices []int) {
+			defer workers.Done()
+
+			for _, i := range indices {
+				decisions[i] = decideMovement(
+					vehiclesBeforeMove[i],
+					vehiclesBeforeMove,
+					intersections,
+				)
+			}
+		}(indices)
+	}
+
+	workers.Wait()
+	for i, decision := range decisions {
 		vehicle := &e.state.Vehicles[i]
-		for j, intersection := range e.state.Intersections {
-			if mustWaitAtIntersection(*vehicle, intersection, dx, dy, vehiclesBeforeMove) {
-				waitingAt[i] = j
-				break
-			}
-		}
-
-		if waitingAt[i] == -1 {
-			for otherIndex, other := range vehiclesBeforeMove {
-				distance := distanceAhead(*vehicle, other, dx, dy)
-				if distance > 0 && distance-vehicleStep < safeDistance(*vehicle, other) {
-					blockedBy[i] = otherIndex
-					break
-				}
-			}
-		}
-
-		vehicle.Waiting = waitingAt[i] != -1 || blockedBy[i] != -1
+		vehicle.Waiting = decision.waitingAt != -1 || decision.blockedBy != -1
 		if vehicle.Waiting {
 			vehicle.WaitingTime += tickSeconds
 			//статистика по режиму
@@ -161,8 +151,8 @@ func (e *Engine) step() {
 		}
 
 		if !vehicle.Waiting {
-			vehicle.X += dx * vehicleStep
-			vehicle.Y += dy * vehicleStep
+			vehicle.X += decision.dx * vehicleStep
+			vehicle.Y += decision.dy * vehicleStep
 		}
 	}
 	// Учёт начала и завершения пересечений
@@ -206,18 +196,19 @@ func (e *Engine) step() {
 			continue
 		}
 		current := i
-		for current != -1 && waitingAt[current] == -1 {
-			current = blockedBy[current]
+		for current != -1 && decisions[current].waitingAt == -1 {
+			current = decisions[current].blockedBy
 		}
 		if current == -1 {
 			continue
 		}
+
+		intersection := &e.state.Intersections[decisions[current].waitingAt]
 		switch e.state.Vehicles[i].Direction {
 		case model.East, model.West:
-			e.state.Intersections[waitingAt[current]].QueueEW++
-
+			intersection.QueueEW++
 		case model.North, model.South:
-			e.state.Intersections[waitingAt[current]].QueueNS++
+			intersection.QueueNS++
 		}
 	}
 	for i := len(e.state.Vehicles); i > 0; i-- {
@@ -258,6 +249,46 @@ func (e *Engine) step() {
 			e.state.Intersections[i].PhaseElapsed = 0
 		}
 	}
+}
+
+type movementDecision struct {
+	dx, dy    float64
+	waitingAt int
+	blockedBy int
+}
+
+func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersections []model.Intersection) movementDecision {
+	decision := movementDecision{waitingAt: -1, blockedBy: -1}
+
+	switch vehicle.Direction {
+	case model.East:
+		decision.dx = 1
+	case model.West:
+		decision.dx = -1
+	case model.North:
+		decision.dy = -1
+	case model.South:
+		decision.dy = 1
+	default:
+		return decision
+	}
+
+	for i, intersection := range intersections {
+		if mustWaitAtIntersection(vehicle, intersection, decision.dx, decision.dy, traffic) {
+			decision.waitingAt = i
+			return decision
+		}
+	}
+
+	for i, other := range traffic {
+		distance := distanceAhead(vehicle, other, decision.dx, decision.dy)
+		if distance > 0 && distance-vehicleStep < safeDistance(vehicle, other) {
+			decision.blockedBy = i
+			return decision
+		}
+	}
+
+	return decision
 }
 
 func occupiesIntersection(
@@ -348,28 +379,66 @@ func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersecti
 	return false
 }
 
+type laneKey struct {
+	horizontal bool
+	coordinate float64
+}
+
+func laneOf(vehicle model.Vehicle) laneKey {
+	switch vehicle.Direction {
+	case model.East, model.West:
+		return laneKey{horizontal: true, coordinate: vehicle.Y}
+	default:
+		return laneKey{horizontal: false, coordinate: vehicle.X}
+	}
+}
+
+func canEnterLane(candidate model.Vehicle, traffic []model.Vehicle) bool {
+	lane := laneOf(candidate)
+
+	for _, other := range traffic {
+		if laneOf(other) != lane {
+			continue
+		}
+
+		distance := math.Abs(other.X-candidate.X) + math.Abs(other.Y-candidate.Y)
+		if distance < safeDistance(candidate, other) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (e *Engine) spawnVehicle() {
 	interval := spawnIntervalTicks * 3 / e.state.Density
 	if (e.state.Tick-1)%interval != 0 {
 		return
 	}
-	spawnPoints := [...]model.Vehicle{
-		{X: 0, Y: 25 + laneOffset, Direction: model.East},
-		{X: 100, Y: 75 - laneOffset, Direction: model.West},
-		{X: 25 - laneOffset, Y: 0, Direction: model.South},
-		{X: 75 + laneOffset, Y: 100, Direction: model.North},
-	}
-	vehicle := spawnPoints[e.state.Statistics.TotalSpawned%len(spawnPoints)]
-	vehicle.Length = carLength
+	length := carLength
 	if e.rng.Float64() < 0.2 {
-		vehicle.Length = truckLength
+		length = truckLength
 	}
-	for _, other := range e.state.Vehicles {
-		if other.Direction == vehicle.Direction &&
-			math.Abs(other.X-vehicle.X)+math.Abs(other.Y-vehicle.Y) < safeDistance(vehicle, other) {
-			return
+
+	var available []model.Vehicle
+	for _, road := range [...]float64{25, 75} {
+		for _, entry := range [...]model.Vehicle{
+			{X: 0, Y: road + laneOffset, Direction: model.East},
+			{X: 100, Y: road - laneOffset, Direction: model.West},
+			{X: road - laneOffset, Y: 0, Direction: model.South},
+			{X: road + laneOffset, Y: 100, Direction: model.North},
+		} {
+			entry.Length = length
+			if canEnterLane(entry, e.state.Vehicles) {
+				available = append(available, entry)
+			}
 		}
 	}
+
+	if len(available) == 0 {
+		return
+	}
+	vehicle := available[e.rng.Intn(len(available))]
 	e.state.Statistics.TotalSpawned++
 	vehicle.ID = e.state.Statistics.TotalSpawned
 	e.state.Vehicles = append(e.state.Vehicles, vehicle)
