@@ -127,6 +127,7 @@ func (e *Engine) step() {
 	}
 
 	workers.Wait()
+	resolveIntersectionEntries(vehiclesBeforeMove, intersections, decisions)
 	for i, decision := range decisions {
 		vehicle := &e.state.Vehicles[i]
 		vehicle.Waiting = decision.waitingAt != -1 || decision.blockedBy != -1
@@ -153,6 +154,11 @@ func (e *Engine) step() {
 		if !vehicle.Waiting {
 			vehicle.X += decision.dx * vehicleStep
 			vehicle.Y += decision.dy * vehicleStep
+			if decision.turnAt != 0 {
+				vehicle.Direction = decision.newDirection
+				vehicle.NextTurn = model.TurnStraight
+				vehicle.TurnedAt = decision.turnAt
+			}
 		}
 	}
 	// Учёт начала и завершения пересечений
@@ -252,13 +258,16 @@ func (e *Engine) step() {
 }
 
 type movementDecision struct {
-	dx, dy    float64
-	waitingAt int
-	blockedBy int
+	dx, dy       float64
+	waitingAt    int
+	blockedBy    int
+	enteringAt   int
+	turnAt       int
+	newDirection model.Direction
 }
 
 func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersections []model.Intersection) movementDecision {
-	decision := movementDecision{waitingAt: -1, blockedBy: -1}
+	decision := movementDecision{waitingAt: -1, blockedBy: -1, enteringAt: -1}
 
 	switch vehicle.Direction {
 	case model.East:
@@ -288,6 +297,7 @@ func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersection
 		}
 	}
 
+	planIntersectionMove(vehicle, intersections, &decision)
 	return decision
 }
 
@@ -441,6 +451,12 @@ func (e *Engine) spawnVehicle() {
 	vehicle := available[e.rng.Intn(len(available))]
 	e.state.Statistics.TotalSpawned++
 	vehicle.ID = e.state.Statistics.TotalSpawned
+	switch vehicle.ID % 5 {
+	case 2:
+		vehicle.NextTurn = model.TurnRight
+	case 4:
+		vehicle.NextTurn = model.TurnLeft
+	}
 	e.state.Vehicles = append(e.state.Vehicles, vehicle)
 }
 

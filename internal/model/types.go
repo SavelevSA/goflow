@@ -16,6 +16,14 @@ const (
 	West  Direction = "west"
 )
 
+type Turn int
+
+const (
+	TurnLeft     Turn = -1
+	TurnStraight Turn = 0
+	TurnRight    Turn = 1
+)
+
 type Phase string
 
 const (
@@ -31,6 +39,8 @@ type Vehicle struct {
 	Direction   Direction `json:"direction"`
 	Waiting     bool      `json:"waiting"`
 	WaitingTime float64   `json:"waitingTime"`
+	NextTurn    Turn      `json:"-"`
+	TurnedAt    int       `json:"-"`
 }
 
 type Intersection struct {

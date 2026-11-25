@@ -88,7 +88,7 @@ func registerDensity(mux *http.ServeMux, sim interface {
 
 		if err != nil {
 			w.WriteHeader(400)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "could not set density"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid request body"})
 			return
 		}
 
@@ -100,7 +100,7 @@ func registerDensity(mux *http.ServeMux, sim interface {
 
 		if sim.SetDensity(body.Density) != nil {
 			w.WriteHeader(500)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "wrong body"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "could not set density"})
 			return
 		}
 
