@@ -239,7 +239,7 @@ func (d *dashboard) renderCity() app.UI {
 				Style("transform", fmt.Sprintf(
 					"translate(-50%%, -50%%) rotate(%ddeg)", angle,
 				)).
-				Style("width", "6%").
+				Style("width", fmt.Sprintf("%g%%", vehicle.Length)).
 				Style("height", "3%").
 				Style("background", "blue").
 				Style("color", "white").
