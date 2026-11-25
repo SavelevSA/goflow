@@ -41,6 +41,7 @@ type Vehicle struct {
 	WaitingTime float64   `json:"waitingTime"`
 	NextTurn    Turn      `json:"-"`
 	TurnedAt    int       `json:"-"`
+	TurnAngle   float64   `json:"turnAngle,omitempty"`
 }
 
 type Intersection struct {

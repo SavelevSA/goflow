@@ -155,9 +155,12 @@ func (e *Engine) step() {
 			vehicle.X += decision.dx * vehicleStep
 			vehicle.Y += decision.dy * vehicleStep
 			if decision.turnAt != 0 {
+				vehicle.TurnedAt = decision.turnAt
+				vehicle.TurnAngle = decision.turnAngle
+			}
+			if decision.newDirection != "" {
 				vehicle.Direction = decision.newDirection
 				vehicle.NextTurn = model.TurnStraight
-				vehicle.TurnedAt = decision.turnAt
 			}
 		}
 	}
@@ -263,23 +266,37 @@ type movementDecision struct {
 	blockedBy    int
 	enteringAt   int
 	turnAt       int
+	turnAngle    float64
 	newDirection model.Direction
+}
+
+func directionStep(direction model.Direction) (dx, dy float64) {
+	switch direction {
+	case model.East:
+		return 1, 0
+	case model.West:
+		return -1, 0
+	case model.North:
+		return 0, -1
+	case model.South:
+		return 0, 1
+	}
+	return 0, 0
 }
 
 func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersections []model.Intersection) movementDecision {
 	decision := movementDecision{waitingAt: -1, blockedBy: -1, enteringAt: -1}
-
-	switch vehicle.Direction {
-	case model.East:
-		decision.dx = 1
-	case model.West:
-		decision.dx = -1
-	case model.North:
-		decision.dy = -1
-	case model.South:
-		decision.dy = 1
-	default:
+	decision.dx, decision.dy = directionStep(vehicle.Direction)
+	if decision.dx == 0 && decision.dy == 0 {
 		return decision
+	}
+	if vehicle.TurnAngle != 0 {
+		for _, intersection := range intersections {
+			if intersection.ID == vehicle.TurnedAt {
+				advanceTurn(vehicle, intersection, &decision)
+				return decision
+			}
+		}
 	}
 
 	for i, intersection := range intersections {
@@ -290,6 +307,15 @@ func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersection
 	}
 
 	for i, other := range traffic {
+		if other.TurnAngle != 0 && other.Direction == vehicle.Direction {
+			for _, intersection := range intersections {
+				if intersection.ID == other.TurnedAt {
+					// Keep a following car behind the start of the occupied turn.
+					other = turnPoint(other, intersection, 0)
+					break
+				}
+			}
+		}
 		distance := distanceAhead(vehicle, other, decision.dx, decision.dy)
 		if distance > 0 && distance-vehicleStep < safeDistance(vehicle, other) {
 			decision.blockedBy = i
@@ -305,6 +331,9 @@ func occupiesIntersection(
 	vehicle model.Vehicle,
 	intersection model.Intersection,
 ) bool {
+	if vehicle.TurnAngle != 0 && vehicle.TurnedAt == intersection.ID {
+		return true
+	}
 	clearance := intersectionHalfSize + halfLength(vehicle)
 
 	switch vehicle.Direction {

@@ -221,53 +221,41 @@ func (d *dashboard) renderCity() app.UI {
 		if vehicle.Length == 9 {
 			color = "orange"
 		}
-		angle := 0
+		angle := float64(vehicleAngle(vehicle.Direction)) + vehicle.TurnAngle
 
-		switch vehicle.Direction {
-		case model.North:
-			angle = -90
-		case model.South:
-			angle = 90
-		case model.West:
-			angle = 180
-		case model.East:
-			angle = 0
-		}
+		marker := app.Div().
+			Style("position", "absolute").
+			Style("left", fmt.Sprintf("%g%%", vehicle.X)).
+			Style("top", fmt.Sprintf("%g%%", vehicle.Y)).
+			Style("transform", fmt.Sprintf(
+				"translate(-50%%, -50%%) rotate(%gdeg)", angle,
+			)).
+			Style("width", fmt.Sprintf("%g%%", vehicle.Length)).
+			Style("height", "3%").
+			Style("background", color).
+			Style("color", "white").
+			Style("font-size", "12px").
+			Style("text-align", "center").
+			Body(
+				app.Span().Text(fmt.Sprintf("%d", vehicle.ID)),
 
-		elements = append(elements,
-			app.Div().
-				Style("position", "absolute").
-				Style("left", fmt.Sprintf("%g%%", vehicle.X)).
-				Style("top", fmt.Sprintf("%g%%", vehicle.Y)).
-				Style("transform", fmt.Sprintf(
-					"translate(-50%%, -50%%) rotate(%ddeg)", angle,
-				)).
-				Style("width", fmt.Sprintf("%g%%", vehicle.Length)).
-				Style("height", "3%").
-				Style("background", color).
-				Style("color", "white").
-				Style("font-size", "12px").
-				Style("text-align", "center").
-				Body(
-					app.Span().Text(fmt.Sprintf("%d", vehicle.ID)),
+				app.Span().
+					Style("position", "absolute").
+					Style("right", "0").
+					Style("top", "10%").
+					Style("width", "15%").
+					Style("height", "25%").
+					Style("background", "yellow"),
 
-					app.Span().
-						Style("position", "absolute").
-						Style("right", "0").
-						Style("top", "10%").
-						Style("width", "15%").
-						Style("height", "25%").
-						Style("background", "yellow"),
-
-					app.Span().
-						Style("position", "absolute").
-						Style("right", "0").
-						Style("bottom", "10%").
-						Style("width", "15%").
-						Style("height", "25%").
-						Style("background", "yellow"),
-				),
-		)
+				app.Span().
+					Style("position", "absolute").
+					Style("right", "0").
+					Style("bottom", "10%").
+					Style("width", "15%").
+					Style("height", "25%").
+					Style("background", "yellow"),
+			)
+		elements = append(elements, marker)
 	}
 
 	return app.Div(). //собирает все в один контейнер карты
@@ -279,13 +267,26 @@ func (d *dashboard) renderCity() app.UI {
 				Body(elements...)
 }
 
+func vehicleAngle(direction model.Direction) int {
+	switch direction {
+	case model.North:
+		return -90
+	case model.South:
+		return 90
+	case model.West:
+		return 180
+	default:
+		return 0
+	}
+}
+
 func (d *dashboard) loadSnapshot(ctx app.Context) {
 	version := d.commandVersion
 	ctx.Async(func() {
 		snapshot, err := fetchSnapshot(d.requestCtx)
 
 		ctx.Dispatch(func(ctx app.Context) {
-			ctx.After(300*time.Millisecond, d.loadSnapshot)
+			ctx.After(100*time.Millisecond, d.loadSnapshot)
 			if d.commandBusy || version != d.commandVersion {
 				return
 			}
