@@ -61,7 +61,7 @@ func advanceTurn(vehicle model.Vehicle, intersection model.Intersection, decisio
 	}
 }
 
-func planIntersectionMove(vehicle model.Vehicle, intersections []model.Intersection, decision *movementDecision) {
+func planIntersectionMove(vehicle model.Vehicle, traffic []model.Vehicle, intersections []model.Intersection, decision *movementDecision) {
 	next := vehicle
 	next.X += decision.dx * vehicleStep
 	next.Y += decision.dy * vehicleStep
@@ -83,6 +83,16 @@ func planIntersectionMove(vehicle model.Vehicle, intersections []model.Intersect
 			continue
 		}
 		if distance == 0 {
+			for j, other := range traffic {
+				if other.TurnAngle != 0 && other.TurnedAt == intersection.ID && other.Direction == vehicle.Direction {
+					decision.blockedBy = j
+					return
+				}
+			}
+			if !canEnterLane(turnPoint(vehicle, intersection, 90), traffic) {
+				decision.waitingAt = i
+				return
+			}
 			advanceTurn(vehicle, intersection, decision)
 		} else {
 			decision.dx = (start.X - vehicle.X) / vehicleStep
@@ -92,33 +102,77 @@ func planIntersectionMove(vehicle model.Vehicle, intersections []model.Intersect
 	}
 }
 
-// A turning vehicle reserves the intersection until its rear has cleared it.
+func intersectionManeuver(vehicle model.Vehicle, intersectionID int) (model.Direction, model.Turn) {
+	if vehicle.TurnedAt == intersectionID && vehicle.CompletedTurn != model.TurnStraight {
+		return turnDirection(vehicle.Direction, -vehicle.CompletedTurn), vehicle.CompletedTurn
+	}
+	return vehicle.Direction, vehicle.NextTurn
+}
+
+func approachLane(vehicle model.Vehicle, intersections []model.Intersection) (laneKey, model.Direction) {
+	if vehicle.TurnedAt != 0 {
+		for _, intersection := range intersections {
+			if intersection.ID != vehicle.TurnedAt || !occupiesIntersection(vehicle, intersection) {
+				continue
+			}
+			direction, _ := intersectionManeuver(vehicle, intersection.ID)
+			dx, dy := directionStep(direction)
+			if dx != 0 {
+				return laneKey{horizontal: true, coordinate: intersection.Y + dx*laneOffset}, direction
+			}
+			return laneKey{coordinate: intersection.X - dy*laneOffset}, direction
+		}
+	}
+	return laneOf(vehicle), vehicle.Direction
+}
+
+func intersectionPathsConflict(first, second model.Vehicle, intersectionID int) bool {
+	firstDirection, firstTurn := intersectionManeuver(first, intersectionID)
+	secondDirection, secondTurn := intersectionManeuver(second, intersectionID)
+	dx, dy := directionStep(firstDirection)
+	otherDX, otherDY := directionStep(secondDirection)
+	approach := dx*otherDX + dy*otherDY
+	if approach == 1 {
+		return false
+	}
+
+	if firstTurn == model.TurnStraight && secondTurn == model.TurnStraight {
+		return approach == 0
+	}
+
+	return approach != -1 || firstTurn == model.TurnLeft || secondTurn == model.TurnLeft
+}
+
 func resolveIntersectionEntries(vehicles []model.Vehicle, intersections []model.Intersection, decisions []movementDecision) {
 	for i, intersection := range intersections {
-		occupied, turning, straightEntering := false, false, false
-		for j, vehicle := range vehicles {
-			plannedTurn := vehicle.NextTurn != model.TurnStraight
+		var occupants []model.Vehicle
+		for _, vehicle := range vehicles {
 			if occupiesIntersection(vehicle, intersection) {
-				occupied = true
-				turning = turning || plannedTurn || vehicle.TurnedAt == intersection.ID
-			}
-			if decisions[j].enteringAt == i && !plannedTurn {
-				straightEntering = true
+				occupants = append(occupants, vehicle)
 			}
 		}
 
-		for j, vehicle := range vehicles {
-			decision := &decisions[j]
-			if decision.enteringAt != i {
-				continue
+		// Admit through traffic and right turns before left turns.
+		for _, turn := range [...]model.Turn{model.TurnStraight, model.TurnRight, model.TurnLeft} {
+			for j, vehicle := range vehicles {
+				decision := &decisions[j]
+				if decision.enteringAt != i || vehicle.NextTurn != turn {
+					continue
+				}
+				if turn != model.TurnStraight && !canEnterLane(turnPoint(vehicle, intersection, 90), vehicles) {
+					decision.waitingAt = i
+					continue
+				}
+				for _, other := range occupants {
+					if intersectionPathsConflict(vehicle, other, intersection.ID) {
+						decision.waitingAt = i
+						break
+					}
+				}
+				if decision.waitingAt == -1 {
+					occupants = append(occupants, vehicle)
+				}
 			}
-			plannedTurn := vehicle.NextTurn != model.TurnStraight
-			if turning || (plannedTurn && (occupied || straightEntering ||
-				!canEnterLane(turnPoint(vehicle, intersection, 90), vehicles))) {
-				decision.waitingAt = i
-				continue
-			}
-			turning = turning || plannedTurn
 		}
 	}
 }

@@ -32,16 +32,17 @@ const (
 )
 
 type Vehicle struct {
-	ID          int       `json:"id"`
-	X           float64   `json:"x"`
-	Y           float64   `json:"y"`
-	Length      float64   `json:"length"`
-	Direction   Direction `json:"direction"`
-	Waiting     bool      `json:"waiting"`
-	WaitingTime float64   `json:"waitingTime"`
-	NextTurn    Turn      `json:"-"`
-	TurnedAt    int       `json:"-"`
-	TurnAngle   float64   `json:"turnAngle,omitempty"`
+	ID            int       `json:"id"`
+	X             float64   `json:"x"`
+	Y             float64   `json:"y"`
+	Length        float64   `json:"length"`
+	Direction     Direction `json:"direction"`
+	Waiting       bool      `json:"waiting"`
+	WaitingTime   float64   `json:"waitingTime"`
+	NextTurn      Turn      `json:"-"`
+	TurnedAt      int       `json:"-"`
+	CompletedTurn Turn      `json:"-"`
+	TurnAngle     float64   `json:"turnAngle,omitempty"`
 }
 
 type Intersection struct {

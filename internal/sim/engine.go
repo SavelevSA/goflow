@@ -23,6 +23,7 @@ const (
 	laneOffset           = 3.0
 	intersectionHalfSize = 6.0
 	vehicleHalfLength    = 3.0
+	vehicleHalfWidth     = 1.5
 	vehicleGap           = 1.0
 	// minVehicleSpacing    = 2*vehicleHalfLength + vehicleGap
 
@@ -159,6 +160,7 @@ func (e *Engine) step() {
 				vehicle.TurnAngle = decision.turnAngle
 			}
 			if decision.newDirection != "" {
+				vehicle.CompletedTurn = vehicle.NextTurn
 				vehicle.Direction = decision.newDirection
 				vehicle.NextTurn = model.TurnStraight
 			}
@@ -286,44 +288,56 @@ func directionStep(direction model.Direction) (dx, dy float64) {
 
 func decideMovement(vehicle model.Vehicle, traffic []model.Vehicle, intersections []model.Intersection) movementDecision {
 	decision := movementDecision{waitingAt: -1, blockedBy: -1, enteringAt: -1}
-	decision.dx, decision.dy = directionStep(vehicle.Direction)
-	if decision.dx == 0 && decision.dy == 0 {
+	dx, dy := directionStep(vehicle.Direction)
+	decision.dx, decision.dy = dx, dy
+	if dx == 0 && dy == 0 {
 		return decision
 	}
 	if vehicle.TurnAngle != 0 {
 		for _, intersection := range intersections {
 			if intersection.ID == vehicle.TurnedAt {
 				advanceTurn(vehicle, intersection, &decision)
+				break
+			}
+		}
+	} else {
+		for i, intersection := range intersections {
+			if mustWaitAtIntersection(vehicle, intersection, dx, dy, traffic) {
+				decision.waitingAt = i
 				return decision
 			}
 		}
-	}
-
-	for i, intersection := range intersections {
-		if mustWaitAtIntersection(vehicle, intersection, decision.dx, decision.dy, traffic) {
-			decision.waitingAt = i
+		planIntersectionMove(vehicle, traffic, intersections, &decision)
+		if decision.waitingAt >= 0 || decision.blockedBy >= 0 {
 			return decision
 		}
 	}
 
+	next := vehicle
+	next.X += decision.dx * vehicleStep
+	next.Y += decision.dy * vehicleStep
+	next.TurnAngle = decision.turnAngle
+	if decision.newDirection != "" {
+		next.Direction = decision.newDirection
+	}
+	lane, direction := approachLane(vehicle, intersections)
 	for i, other := range traffic {
-		if other.TurnAngle != 0 && other.Direction == vehicle.Direction {
-			for _, intersection := range intersections {
-				if intersection.ID == other.TurnedAt {
-					// Keep a following car behind the start of the occupied turn.
-					other = turnPoint(other, intersection, 0)
-					break
-				}
+		ahead := (other.X-vehicle.X)*dx + (other.Y-vehicle.Y)*dy
+		if ahead <= 0 {
+			continue
+		}
+		if distanceAhead(vehicle, other, dx, dy) == 0 {
+			otherLane, otherDirection := approachLane(other, intersections)
+			if lane != otherLane || direction != otherDirection {
+				continue
 			}
 		}
-		distance := distanceAhead(vehicle, other, decision.dx, decision.dy)
-		if distance > 0 && distance-vehicleStep < safeDistance(vehicle, other) {
+		if nextVehicleTooClose(next, other, dx, dy) {
 			decision.blockedBy = i
+			decision.enteringAt = -1
 			return decision
 		}
 	}
-
-	planIntersectionMove(vehicle, intersections, &decision)
 	return decision
 }
 
@@ -380,6 +394,25 @@ func safeDistance(first, second model.Vehicle) float64 {
 	return halfLength(first) + halfLength(second) + vehicleGap
 }
 
+func vehicleHalfExtents(vehicle model.Vehicle) (float64, float64) {
+	dx, dy := directionStep(vehicle.Direction)
+	sin, cos := math.Sincos(vehicle.TurnAngle * math.Pi / 180)
+	x := math.Abs(dx*cos - dy*sin)
+	y := math.Abs(dx*sin + dy*cos)
+	length := halfLength(vehicle)
+	return length*x + vehicleHalfWidth*y, length*y + vehicleHalfWidth*x
+}
+
+func nextVehicleTooClose(next, other model.Vehicle, dx, dy float64) bool {
+	nextX, nextY := vehicleHalfExtents(next)
+	otherX, otherY := vehicleHalfExtents(other)
+	x, y := other.X-next.X, other.Y-next.Y
+	if dx != 0 {
+		return x*dx < nextX+otherX+vehicleGap && math.Abs(y) < nextY+otherY+vehicleGap
+	}
+	return y*dy < nextY+otherY+vehicleGap && math.Abs(x) < nextX+otherX+vehicleGap
+}
+
 func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersection, dx, dy float64, traffic []model.Vehicle) bool {
 	var distance float64
 	var greenPhase model.Phase
@@ -404,15 +437,8 @@ func mustWaitAtIntersection(vehicle model.Vehicle, intersection model.Intersecti
 	}
 
 	for _, other := range traffic {
-		switch other.Direction {
-		case model.East, model.West:
-			if dy != 0 && occupiesIntersection(other, intersection) {
-				return true
-			}
-		case model.North, model.South:
-			if dx != 0 && occupiesIntersection(other, intersection) {
-				return true
-			}
+		if occupiesIntersection(other, intersection) && intersectionPathsConflict(vehicle, other, intersection.ID) {
+			return true
 		}
 	}
 	return false
